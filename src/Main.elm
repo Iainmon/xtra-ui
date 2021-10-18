@@ -12,6 +12,11 @@ import Json.Encode as JE
 import Draggable exposing (init)
 import SvgParser exposing(parse)
 import String exposing(split)
+import Html.Attributes exposing (height)
+import Html.Attributes exposing (width)
+import Html.Attributes exposing (style)
+import ElmEscapeHtml exposing (unescape)
+import Regex
 
 type alias Model = { program : String, filter : String, dotString : String, image : String}
 
@@ -25,7 +30,7 @@ exampleProg : String
 exampleProg = "let fact = \\x -> case x of 0 -> 1; y -> y * fact (x - 1); in fact 5"
 
 exampleFilter : String
-exampleFilter = "hide <let fact = _X in _Y => _Z>\nhide <fact _X => _Y> then children\nfactor binding\nfactor <_X - 1 => _Y> then all\nhide pattern\nhide (nonFirstTwo <fact _X => _Y>) except (afterLast <fact _X => _Y>)\nhide reflexive"
+exampleFilter = "recursive s = (nonFirstTwo s) except (afterLast s)\n\ndecBy1 = <_X - 1 => _Y>\nintermediateFact = recursive <fact _X => _Y>\ncases = <fact _X => _Y> then children\n\nhide <let fact = _X in _Y => _Z>\nhide cases\nfactor binding\nfactor decBy1 then all\nhide pattern\nhide intermediateFact\nhide reflexive"
 
 krokiURL : String
 krokiURL = "http://localhost:8001/graphviz/svg"
@@ -35,23 +40,29 @@ xtraBackendURL = "http://localhost:8081/trace"
 
 view : Model -> Html Msg
 view model =
-    div []
-        [textarea [rows 8, cols 60, onInput SaveProg] [text <| .program model]
-        ,hr [] []
-        ,textarea [rows 8, cols 60, onInput SaveFilt] [text <| .filter model]
-        ,hr [] []
-        ,button [onClick Clear] [text "Clear"]
-        ,button [onClick Run] [text "Run"]
-        ,button [onClick LoadEx] [text "LoadEx"]
-        ,hr [] []
-        ,div [] [text <| .dotString model]
-        ,hr [] []
-        ,svgOrNot model
-        ,hr [] []
-        ,div [] [text <| cleanSvgString <| .image model]
-        ,hr [] []
-        ,div [] [text <| .image model]
+    table [] 
+        [tr [] 
+            [th [] [text "Input"]
+            ,th [] [text "Output"]
+            ]
+        , tr []
+            [td [ style "vertical-align" "top" ] 
+                [button [onClick Clear] [text "Clear"]
+                ,button [onClick Run] [text "Run"]
+                ,button [onClick LoadEx] [text "LoadEx"]
+                ,hr [] []
+                ,textarea [rows 8, cols 60, onInput SaveProg] [text <| .program model]
+                ,hr [] []
+                ,textarea [rows 8, cols 60, onInput SaveFilt] [text <| .filter model]
+                ,hr [] []
+                ,textarea [rows 8, cols 60] [text <| (.image model) ]
+                ,hr [] []
+                ,textarea [rows 8, cols 60, onInput ManualDot ] [text <| (.dotString model) ]
+                ]
+            ,td [] [ div [height 600, width 400] [svgOrNot model] ]
+            ]
         ]
+
 
 type Msg 
     = Run
@@ -61,6 +72,7 @@ type Msg
     | SaveFilt String
     | GotDot (Result Http.Error String)
     | GotSvg (Result Http.Error String)
+    | ManualDot String
 
 svgOrNot : Model -> Html Msg
 svgOrNot model = 
@@ -86,21 +98,13 @@ update : Msg -> Model -> (Model, Cmd Msg)
 update msg model =
     case msg of
         Clear ->
-            (   {model | program = "", filter = "", image = ""}
-            , Cmd.none
-            )
+            init ()
         LoadEx ->
-            (   {model | program = exampleProg, filter = exampleFilter, image = ""}
-            , Cmd.none
-            )
+            update Run {model | program = exampleProg, filter = exampleFilter, image = ""}
         SaveProg prog ->
-            ( {model | program = prog}
-            , Cmd.none 
-            )
+            update Run {model | program = prog}
         SaveFilt filt ->
-            ( {model | filter = filt}
-            , Cmd.none
-            )
+            update Run {model | filter = filt}
         Run ->
             ( model, getDotString model )
         GotDot (Ok dot) ->
@@ -110,12 +114,13 @@ update msg model =
             , Cmd.none
             )
         GotSvg (Ok svg) ->
-            ( {model | image = svg}, Cmd.none)
+            ( {model | image = stringFindAndReplace svg svgReplace}, Cmd.none)--( {model | image = unescape svg}, Cmd.none)
         GotSvg (Err httpError) ->
             ( { model | image = buildErrorMessage httpError}
             , Cmd.none
             )
-
+        ManualDot dot ->
+            ( {model | dotString = dot}, getSvg {model | dotString = dot} )
 
 
 getDotString : Model -> Cmd Msg
@@ -144,7 +149,7 @@ getSvg model =
     Http.post
     { url = krokiURL
         , expect = Http.expectString GotSvg
-        , body = Http.jsonBody <| JE.object [ ("diagram_source", JE.string (.dotString model)) ]
+        , body = Http.jsonBody <| JE.object [ ("diagram_source", JE.string (.dotString model)), ("layout", JE.string "sfdp") ]
     }
 
 buildErrorMessage : Http.Error -> String
@@ -164,6 +169,40 @@ buildErrorMessage httpError =
 
         Http.BadBody message ->
             message
+
+nodePattern = "[0-9]. -> [0-9].;"
+
+nodePattern2 = "<FONT COLOR=\"#0000ff\" POINT-SIZE=\"9\">[0-9].</FONT>"
+
+nodeTest = "<FONT COLOR=\"#0000ff\" POINT-SIZE=\"9\">66</FONT>\n<FONT COLOR=\"#0000ff\" POINT-SIZE=\"9\">65</FONT>"
+beforeNode = "<FONT COLOR=\"#0000ff\" POINT-SIZE=\"9\">"
+afterNode = "</FONT>"
+
+fixNodes : String -> String
+fixNodes dot = fixNodesHelper (Regex.find nodeRegex dot) dot
+
+fixNodesHelper : List Regex.Match -> String -> String
+fixNodesHelper _ dot = dot
+
+
+--"[0-9]. -> [0-9].;"
+--"<FONT COLOR="#0000ff" POINT-SIZE="9">[0-9].<\/FONT>"
+
+nodeRegex : Regex.Regex
+nodeRegex = Maybe.withDefault Regex.never (Regex.fromString nodePattern2)
+
+--Source -> Replacements -> Output
+stringFindAndReplace : String -> List (String,String) -> String
+stringFindAndReplace source list =
+    case list of
+       [] -> source
+       ((match, replacement) :: xs) -> stringFindAndReplace (String.replace match replacement source) xs
+
+svgReplace : List (String,String)
+svgReplace =    [("&quot;","\"")
+                ,("&#45;","-")
+                ,("&#32;"," ")
+                ,("&#160;"," ")]
 
 main : Program () Model Msg
 main =
