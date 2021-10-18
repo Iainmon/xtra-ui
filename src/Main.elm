@@ -108,7 +108,7 @@ update msg model =
         Run ->
             ( model, getDotString model )
         GotDot (Ok dot) ->
-            ( {model | dotString = dot}, getSvg {model | dotString = dot} )
+            ( {model | dotString = fixNodes dot}, getSvg {model | dotString = fixNodes dot} )
         GotDot (Err httpError) ->
             ( { model | dotString = buildErrorMessage httpError}
             , Cmd.none
@@ -170,26 +170,69 @@ buildErrorMessage httpError =
         Http.BadBody message ->
             message
 
-nodePattern = "[0-9]. -> [0-9].;"
+nodePattern = "\">[0-9].</FONT>"
 
-nodePattern2 = "<FONT COLOR=\"#0000ff\" POINT-SIZE=\"9\">[0-9].</FONT>"
-
-nodeTest = "<FONT COLOR=\"#0000ff\" POINT-SIZE=\"9\">66</FONT>\n<FONT COLOR=\"#0000ff\" POINT-SIZE=\"9\">65</FONT>"
-beforeNode = "<FONT COLOR=\"#0000ff\" POINT-SIZE=\"9\">"
+--nodeTest = "<FONT COLOR=\"#0000ff\" POINT-SIZE=\"9\">66</FONT>\n<FONT COLOR=\"#0000ff\" POINT-SIZE=\"9\">65</FONT>"
+beforeNode = "POINT-SIZE=\"9\">"
 afterNode = "</FONT>"
 
 fixNodes : String -> String
-fixNodes dot = fixNodesHelper (Regex.find nodeRegex dot) dot
+fixNodes dot = 
+    let nodeNums = findAllNodeNumbers dot in
+    let alphas = List.reverse (getAlphaNodes (List.length nodeNums)) in
+    let replacers = genReplaceNode nodeNums alphas in
+    stringFindAndReplace dot replacers
 
-fixNodesHelper : List Regex.Match -> String -> String
-fixNodesHelper _ dot = dot
 
+genReplaceNode : List Int -> List String -> List (String, String)
+genReplaceNode num alpha =
+    case (num,alpha) of
+       ([],_) -> []
+       (_,[]) -> []
+       ((n :: ns),(a :: alphs)) -> [(wrapNodeMatch (String.fromInt n), wrapNodeMatch a)] ++ genReplaceNode ns alphs
+
+wrapNodeMatch : String -> String
+wrapNodeMatch i = beforeNode ++ i ++ afterNode
+
+findAllNodeNumbers : String -> List Int
+findAllNodeNumbers dot = pullIDs (Regex.find nodeRegex dot)
+
+--genReplacementList : List Int -> 
+
+pullIDs : List Regex.Match -> List Int
+pullIDs list =
+    case list of
+        [] -> []
+        (x :: xs) -> 
+            let y = .match x in
+                [Maybe.withDefault 0 (String.toInt (String.slice 2 -7 y))] ++ pullIDs xs
 
 --"[0-9]. -> [0-9].;"
 --"<FONT COLOR="#0000ff" POINT-SIZE="9">[0-9].<\/FONT>"
 
 nodeRegex : Regex.Regex
-nodeRegex = Maybe.withDefault Regex.never (Regex.fromString nodePattern2)
+nodeRegex = Maybe.withDefault Regex.never (Regex.fromString nodePattern)
+
+
+-- TODO: This kinda works, boundaries are wonky, but ok for now. fix later.
+getAlphaNodes : Int -> List String
+getAlphaNodes i =
+    if i < 1 then
+        []
+    else 
+        getAlphaNodes (i - 1) ++ [getNodeExact i]
+
+getNodeExact : Int -> String
+getNodeExact i =
+    if i == 0 then
+        ""
+    else if i <= 26 then
+        String.fromChar (Char.fromCode (i + 64))
+    else 
+        let iDiv = i // 26 in
+        let iRem = remainderBy 26 i in 
+        (getNodeExact iDiv) ++ (getNodeExact (iRem))
+
 
 --Source -> Replacements -> Output
 stringFindAndReplace : String -> List (String,String) -> String
@@ -203,6 +246,8 @@ svgReplace =    [("&quot;","\"")
                 ,("&#45;","-")
                 ,("&#32;"," ")
                 ,("&#160;"," ")]
+
+
 
 main : Program () Model Msg
 main =
