@@ -4,27 +4,54 @@ import Browser
 import Html exposing (..)
 import Html.Events exposing (..)
 import Draggable exposing (Msg)
-import Html.Attributes exposing (rows)
-import Html.Attributes exposing (cols)
+import Html.Attributes exposing (rows, cols)
 import Http
 import Json.Decode as D
 import Json.Encode as JE
 import Draggable exposing (init)
-import SvgParser exposing(parse)
-import String exposing(split)
+import SvgParser exposing(parse, parseToNode, nodeToSvg, SvgNode(..), toAttribute, Element)
+import Svg exposing (Attribute, Svg, node, svg)
 import Html.Attributes exposing (height)
 import Html.Attributes exposing (width)
 import Html.Attributes exposing (style)
-import ElmEscapeHtml exposing (unescape)
-import Regex
+import Svg.Attributes as Attr
+import Math.Vector2 as Vector2 exposing (Vec2, getX, getY)
 
-type alias Model = { program : String, filter : String, dotString : String, image : String}
+type alias Size num =
+    { width : num
+    , height : num
+    }
+type alias Model = 
+    { program : String
+    , filter : String
+    , dotString : String
+    , svgString : String
+    , zoom : Float
+    , center : Vec2
+    , size : Size Float
+    , drag : Draggable.State ()
+    }
 
-init : () -> (Model, Cmd Msg)
+-- Initial state
+-- Todo: Smarter initial values for size and center?
+init : flags -> (Model, Cmd Msg)
 init _ = 
-    ( { program = "", filter = "", dotString = "", image = ""}
+    ( { program = ""
+      , filter = ""
+      , dotString = ""
+      , svgString = ""
+      , zoom = 1
+      , center = Vector2.vec2 750 500
+      , size = Size 1500 1000
+      , drag = Draggable.init
+      }
     , Cmd.none
     )
+
+--From Draggable pan/zoom example
+dragConfig : Draggable.Config () Msg
+dragConfig =
+    Draggable.basicConfig (OnDragBy << (\( dx, dy ) -> Vector2.vec2 dx dy))
 
 exampleProg : String
 exampleProg = "let fact = \\x -> case x of 0 -> 1; y -> y * fact (x - 1); in fact 5"
@@ -40,6 +67,41 @@ xtraBackendURL = "http://localhost:8081/trace"
 
 view : Model -> Html Msg
 view model =
+    let
+        ( cx, cy ) =
+            ( getX model.center, getY model.center )
+
+        ( halfWidth, halfHeight ) =
+            ( model.size.width / model.zoom / 2, model.size.height / model.zoom / 2 )
+
+        ( top, left ) =
+            ( cy - halfHeight, cx - halfWidth )
+
+        ( bottom, right ) =
+            ( cy + halfHeight, cx + halfWidth )
+
+        panning =
+            "translate(" ++ String.fromFloat -left ++ ", " ++ String.fromFloat -top ++ ")"
+
+        zooming =
+            "scale(" ++ String.fromFloat model.zoom ++ ")"
+        makeSvg modelIn = if modelIn.svgString == "" then div [] [] else
+            case svgNodeToSvgMod (modNodeTextLength << modTitle) (cleanSvgString (modelIn.svgString)) of
+               Err msg -> div [] [text msg]
+               Ok (attrs, svgs) ->
+                    Svg.svg
+                        [ num Attr.width modelIn.size.width
+                        , num Attr.height modelIn.size.height
+                        , handleZoom Zoom
+                        , Draggable.mouseTrigger () DragMsg
+                        ]
+                        [(Svg.g 
+                            [ Attr.transform (zooming ++ " " ++ panning)
+                            , Attr.id "graph0"
+                            , Attr.class "graph"
+                            ] svgs 
+                        )]
+    in
     table [] 
         [tr [] 
             [th [] [text "Input"]
@@ -55,15 +117,38 @@ view model =
                 ,hr [] []
                 ,textarea [rows 8, cols 60, onInput SaveFilt] [text <| .filter model]
                 ,hr [] []
-                ,textarea [rows 8, cols 60] [text <| (.image model) ]
+                ,textarea [rows 8, cols 60, onInput ManualSvg] [text <| (.svgString model) ]
                 ,hr [] []
-                ,textarea [rows 8, cols 60, onInput ManualDot ] [text <| (.dotString model) ]
+                ,textarea [rows 8, cols 60, onInput ManualDot] [text <| (.dotString model) ]
                 ]
-            ,td [] [ div [height 600, width 400] [svgOrNot model] ]
+            ,td [style "border-style" "double"] [ makeSvg model ]
             ]
         ]
 
+--From Draggable pan/zoom example
+num : (String -> Svg.Attribute msg) -> Float -> Svg.Attribute msg
+num attr value =
+    attr (String.fromFloat value)
 
+--From Draggable pan/zoom example
+handleZoom : (Float -> msg) -> Svg.Attribute msg
+handleZoom onZoom =
+    let
+        alwaysPreventDefaultAndStopPropagation msg =
+            { message = msg, stopPropagation = True, preventDefault = True }
+
+        zoomDecoder : D.Decoder msg
+        zoomDecoder =
+            D.float
+                |> D.field "deltaY"
+                |> D.map (onZoom)
+    in
+    Html.Events.custom
+        "wheel"
+    <|
+        D.map alwaysPreventDefaultAndStopPropagation zoomDecoder
+
+--Msg data type, for events
 type Msg 
     = Run
     | Clear
@@ -72,17 +157,24 @@ type Msg
     | SaveFilt String
     | GotDot (Result Http.Error String)
     | GotSvg (Result Http.Error String)
+    | ManualSvg String
     | ManualDot String
+    | DragMsg (Draggable.Msg ())
+    | OnDragBy Vec2
+    | Zoom Float
 
+-- Now outdated function to  get Svg to embed
 svgOrNot : Model -> Html Msg
 svgOrNot model = 
-    if .image model == "" then
+    if .svgString model == "" then
         div [] []
     else
-        case parse (cleanSvgString (.image model)) of
+        case parseWithNodeMod (modNodeTextLength << modTitle) (cleanSvgString (.svgString model)) of
             Err msg -> div [] [text msg]
             Ok elem -> elem
 
+-- TODO: Replace with smarter parsing
+-- Cleaning SVG string before parsing (Removing text prior to <svg> tag)
 cleanSvgString : String -> String
 cleanSvgString str 
     = String.dropLeft 222 str
@@ -93,14 +185,14 @@ cleanSvgString str
            --}
 
 
-
+-- Master update function for processing event msgs
 update : Msg -> Model -> (Model, Cmd Msg)
 update msg model =
     case msg of
         Clear ->
             init ()
         LoadEx ->
-            update Run {model | program = exampleProg, filter = exampleFilter, image = ""}
+            update Run {model | program = exampleProg, filter = exampleFilter, svgString = ""}
         SaveProg prog ->
             update Run {model | program = prog}
         SaveFilt filt ->
@@ -108,21 +200,44 @@ update msg model =
         Run ->
             ( model, getDotString model )
         GotDot (Ok dot) ->
-            ( {model | dotString = fixNodes dot}, getSvg {model | dotString = fixNodes dot} )
+            ( {model | dotString = dot}, getSvg {model | dotString = dot} )
         GotDot (Err httpError) ->
             ( { model | dotString = buildErrorMessage httpError}
             , Cmd.none
             )
         GotSvg (Ok svg) ->
-            ( {model | image = stringFindAndReplace svg svgReplace}, Cmd.none)--( {model | image = unescape svg}, Cmd.none)
+            ( {model | svgString = stringFindAndReplace svg svgReplace}, Cmd.none)--( {model | svgString = unescape svg}, Cmd.none)
         GotSvg (Err httpError) ->
-            ( { model | image = buildErrorMessage httpError}
+            ( { model | svgString = buildErrorMessage httpError}
             , Cmd.none
             )
         ManualDot dot ->
             ( {model | dotString = dot}, getSvg {model | dotString = dot} )
+        ManualSvg svg ->
+            ( {model | svgString = stringFindAndReplace svg svgReplace}, Cmd.none )
+        OnDragBy rawDelta ->
+            let
+                delta =
+                    rawDelta
+                        |> Vector2.scale (-1 / model.zoom)
+            in
+            ( { model | center = model.center |> Vector2.add delta }, Cmd.none )
+        Zoom factor ->
+            let
+                newZoom =
+                    model.zoom
+                        |> (+) (factor * 0.002)
+                        |> clamp 0.5 5
+            in
+            ( { model | zoom = newZoom }, Cmd.none )
+        DragMsg dragMsg ->
+            Draggable.update dragConfig dragMsg model
 
+subscriptions : Model -> Sub Msg
+subscriptions { drag } =
+    Draggable.subscriptions DragMsg drag
 
+--Htto request code for getting Dot String from server
 getDotString : Model -> Cmd Msg
 getDotString model = 
 {--}
@@ -144,6 +259,7 @@ getDotString model =
     }
 --}
 
+--Http request code for getting SvgString from Kroki Container
 getSvg : Model -> Cmd Msg
 getSvg model =
     Http.post
@@ -152,6 +268,7 @@ getSvg model =
         , body = Http.jsonBody <| JE.object [ ("diagram_source", JE.string (.dotString model)), ("layout", JE.string "sfdp") ]
     }
 
+--Http error to String message funciton
 buildErrorMessage : Http.Error -> String
 buildErrorMessage httpError =
     case httpError of
@@ -170,10 +287,15 @@ buildErrorMessage httpError =
         Http.BadBody message ->
             message
 
+-- This code for replacing Node numbers with Letters is no longer needed
+{-
+nodePattern : String
 nodePattern = "\">[0-9].</FONT>"
 
 --nodeTest = "<FONT COLOR=\"#0000ff\" POINT-SIZE=\"9\">66</FONT>\n<FONT COLOR=\"#0000ff\" POINT-SIZE=\"9\">65</FONT>"
+beforeNode : String
 beforeNode = "POINT-SIZE=\"9\">"
+afterNode : String
 afterNode = "</FONT>"
 
 fixNodes : String -> String
@@ -189,7 +311,7 @@ genReplaceNode num alpha =
     case (num,alpha) of
        ([],_) -> []
        (_,[]) -> []
-       ((n :: ns),(a :: alphs)) -> [(wrapNodeMatch (String.fromInt n), wrapNodeMatch a)] ++ genReplaceNode ns alphs
+       ((n :: ns),(a :: alphs)) -> (wrapNodeMatch (String.fromInt n), wrapNodeMatch a) :: genReplaceNode ns alphs
 
 wrapNodeMatch : String -> String
 wrapNodeMatch i = beforeNode ++ i ++ afterNode
@@ -205,7 +327,7 @@ pullIDs list =
         [] -> []
         (x :: xs) -> 
             let y = .match x in
-                [Maybe.withDefault 0 (String.toInt (String.slice 2 -7 y))] ++ pullIDs xs
+                Maybe.withDefault 0 (String.toInt (String.slice 2 -7 y)) :: pullIDs xs
 
 --"[0-9]. -> [0-9].;"
 --"<FONT COLOR="#0000ff" POINT-SIZE="9">[0-9].<\/FONT>"
@@ -214,7 +336,7 @@ nodeRegex : Regex.Regex
 nodeRegex = Maybe.withDefault Regex.never (Regex.fromString nodePattern)
 
 
--- TODO: This kinda works, boundaries are wonky, but ok for now. fix later.
+-- This kinda works, boundaries are wonky, but ok for now. fix later.
 getAlphaNodes : Int -> List String
 getAlphaNodes i =
     if i < 1 then
@@ -232,21 +354,23 @@ getNodeExact i =
         let iDiv = i // 26 in
         let iRem = remainderBy 26 i in 
         (getNodeExact iDiv) ++ (getNodeExact (iRem))
+-}
 
-
---Source -> Replacements -> Output
+-- Intended to crudely replace html character codes
+-- This way (pick and choose relevant) is much faster than an all-inclusive solution
 stringFindAndReplace : String -> List (String,String) -> String
 stringFindAndReplace source list =
     case list of
        [] -> source
        ((match, replacement) :: xs) -> stringFindAndReplace (String.replace match replacement source) xs
 
+-- Basic map of html character codes and their replacement
 svgReplace : List (String,String)
 svgReplace =    [("&quot;","\"")
                 ,("&#45;","-")
                 ,("&#32;"," ")
-                ,("&#160;"," ")]
-
+                ,("&#160;"," ")
+                ,("&gt;",">")]
 
 
 main : Program () Model Msg
@@ -255,5 +379,98 @@ main =
         { init = init
         , view = view
         , update = update
-        , subscriptions = \_ -> Sub.none
+        , subscriptions = subscriptions
         }
+
+
+--Checks a list of svgNodes to see if it contains a title node
+svgNodeListHasTitle : List SvgNode -> Bool
+svgNodeListHasTitle nodes =
+    case nodes of
+        [] -> False
+        (n::ns) -> 
+            case n of
+            SvgElement elem -> if elem.name == "title" then True else svgNodeListHasTitle ns
+            _   -> svgNodeListHasTitle ns
+
+-- Modifies an SvgNodes innerText, but Only if it's a title
+changeTitleNodeText : String -> SvgNode -> SvgNode
+changeTitleNodeText str node =
+    case node of
+        SvgElement elem ->   if elem.name == "title"
+                            then
+                                SvgElement {elem | children = [SvgText str] }
+                            else
+                                node
+        _ -> node
+
+-- Gets a List of all SvgText Strings for all child SvgNodes
+getAllNodesText : SvgNode -> List String
+getAllNodesText node = 
+    case node of
+       SvgComment _ -> []
+       SvgText str -> [str]
+       SvgElement elem -> if elem.name == "title" then [] else List.foldr (\x->\t-> getAllNodesText x ++ t) [] elem.children
+
+--Changes Titles to node contents following these rules:
+--    If SVGNode has a child SvgElement with name "title"
+--        Then modify that child's child SvgText to equal SVGNode's child SvgText
+modTitle : SvgNode -> SvgNode
+modTitle node = case node of
+    SvgComment _ -> node
+    SvgText _ -> node
+    SvgElement elem ->  if svgNodeListHasTitle elem.children 
+                        then
+                        let newTitle = getAllNodesText node in
+                            case List.head newTitle of -- TODO: Kinda bad? Just takes first result, better method?
+                               Just str ->
+                                    let newChildren = List.map (changeTitleNodeText str) elem.children in
+                                        SvgElement {elem | children = List.map modTitle newChildren}
+                               Nothing -> SvgElement {elem | children = List.map modTitle elem.children}
+                        else SvgElement {elem | children = List.map modTitle elem.children}
+
+
+modNodeTextLength : SvgNode -> SvgNode
+modNodeTextLength node = case node of
+    SvgComment _ -> node
+    SvgText str -> if (String.length str) > maxNodeLength then SvgText ((String.left (maxNodeLength - 3) str) ++ "...") else node
+    SvgElement elem -> if elem.name == "title" then node else SvgElement {elem | children = List.map modNodeTextLength elem.children}
+
+maxNodeLength : Int
+maxNodeLength = 20
+
+
+--Modified version of SvgParser parse function to include (SvgNode -> SvgNode) modifier function before converting to html
+--ToDo: This may again require modification for onCliick??
+parseWithNodeMod : (SvgNode -> SvgNode) -> String -> Result String (Html msg)
+parseWithNodeMod mod input =
+    let 
+        toHtml svgNode =
+            case mod svgNode of
+                SvgElement element ->
+                    if element.name == "svg" then
+                        Ok <|
+                            svg (List.map toAttribute element.attributes)
+                                (List.map nodeToSvg element.children)
+
+                    else
+                        Err "Top element is not svg"
+
+                _ ->
+                    Err "Top element is not svg"
+    in
+    parseToNode input |> Result.andThen toHtml
+
+svgNodeToSvgMod : (SvgNode -> SvgNode) -> String -> Result String (List (Html.Attribute msg), List (Svg msg)) 
+svgNodeToSvgMod mod input =
+    let 
+        toHtml svgNode = 
+            case mod svgNode of
+            SvgElement element ->
+                    if element.name == "svg" then
+                        Ok ((List.map toAttribute element.attributes), (List.map nodeToSvg element.children))
+                    else Err "Top element is not svg"
+            _ -> 
+                    Err "Top element is not svg"
+    in
+    parseToNode input |> Result.andThen toHtml
