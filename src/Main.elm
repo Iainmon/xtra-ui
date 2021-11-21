@@ -214,7 +214,8 @@ update msg model =
                 maxLabelLength = 35 -- replace with model variable
                 matchTokens = ["=","⇒","of","in", ";"] -- replace with model variable (recieved from backend)
                 shortenedDot = DU.shortenLabels dot newNodeLabels maxLabelLength matchTokens
-            in ( {model | dotString = dot, shortDotString = shortenedDot, refNodes = newRefNodes, allNodeLabels = newNodeLabels}, getSvg {model | dotString = dot} )
+                newModel = {model | dotString = dot, shortDotString = shortenedDot, refNodes = newRefNodes, allNodeLabels = newNodeLabels}
+            in ( newModel, getSvg newModel )
         GotDot (Err httpError) ->
             ( { model | dotString = buildErrorMessage httpError}
             , Cmd.none
