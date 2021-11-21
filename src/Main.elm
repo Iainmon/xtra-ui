@@ -11,11 +11,13 @@ import Json.Encode as JE
 import Draggable exposing (init)
 import SvgParser exposing(parse, parseToNode, nodeToSvg, SvgNode(..), toAttribute, Element)
 import Svg exposing (Attribute, Svg, node, svg)
-import Html.Attributes exposing (height)
-import Html.Attributes exposing (width)
 import Html.Attributes exposing (style)
 import Svg.Attributes as Attr
 import Math.Vector2 as Vector2 exposing (Vec2, getX, getY)
+import List.Extra
+
+import DotUtil as DU
+import SvgUtil as SU
 
 type alias Size num =
     { width : num
@@ -26,6 +28,9 @@ type alias Model =
     , filter : String
     , dotString : String
     , svgString : String
+    , refNodes : List String
+    , allNodeLabels : List (String, String)
+    , shortDotString : String
     , zoom : Float
     , center : Vec2
     , size : Size Float
@@ -40,6 +45,9 @@ init _ =
       , filter = ""
       , dotString = ""
       , svgString = ""
+      , refNodes = []
+      , allNodeLabels = []
+      , shortDotString = ""
       , zoom = 1
       , center = Vector2.vec2 750 500
       , size = Size 1500 1000
@@ -86,7 +94,8 @@ view model =
         zooming =
             "scale(" ++ String.fromFloat model.zoom ++ ")"
         makeSvg modelIn = if modelIn.svgString == "" then div [] [] else
-            case svgNodeToSvgMod (modNodeTextLength << modTitle) (cleanSvgString (modelIn.svgString)) of
+            case svgNodeToSvgMod (identity) (SU.cleanFront (modelIn.svgString)) of
+            --case svgNodeToSvgMod (modNodeTextLength << modTitle) <| SU.cleanFront (modelIn.svgString) of
                Err msg -> div [] [text msg]
                Ok (attrs, svgs) ->
                     Svg.svg
@@ -94,6 +103,7 @@ view model =
                         , num Attr.height modelIn.size.height
                         , handleZoom Zoom
                         , Draggable.mouseTrigger () DragMsg
+                      --  , onClick SVGClicked
                         ]
                         [(Svg.g 
                             [ Attr.transform (zooming ++ " " ++ panning)
@@ -120,6 +130,12 @@ view model =
                 ,textarea [rows 8, cols 60, onInput ManualSvg] [text <| (.svgString model) ]
                 ,hr [] []
                 ,textarea [rows 8, cols 60, onInput ManualDot] [text <| (.dotString model) ]
+        {--     ,hr [] []
+                ,textarea [rows 8, cols 60] [text <| String.join ", " <|(.refNodes model) ]
+                ,hr [] []
+                ,textarea [rows 8, cols 60] [text <| showStrTupList <|(.allNodeLabels model) ] --} 
+                ,hr [] []
+                ,textarea [rows 8, cols 60] [text <|(.shortDotString model) ] 
                 ]
             ,td [style "border-style" "double"] [ makeSvg model ]
             ]
@@ -164,25 +180,18 @@ type Msg
     | Zoom Float
 
 -- Now outdated function to  get Svg to embed
+{-- 
+
 svgOrNot : Model -> Html Msg
 svgOrNot model = 
     if .svgString model == "" then
         div [] []
     else
-        case parseWithNodeMod (modNodeTextLength << modTitle) (cleanSvgString (.svgString model)) of
+        case parseWithNodeMod (modNodeTextLength << modTitle) (SU.cleanFront (.svgString model)) of
             Err msg -> div [] [text msg]
             Ok elem -> elem
 
--- TODO: Replace with smarter parsing
--- Cleaning SVG string before parsing (Removing text prior to <svg> tag)
-cleanSvgString : String -> String
-cleanSvgString str 
-    = String.dropLeft 222 str
-    {--let res = List.head ( List.drop 1 (String.split "<!-- Pages: 1 --> " str)) in
-        case res of
-            Just svg -> svg
-            Nothing -> "Parsing Error"
-           --}
+--}
 
 
 -- Master update function for processing event msgs
@@ -200,13 +209,18 @@ update msg model =
         Run ->
             ( model, getDotString model )
         GotDot (Ok dot) ->
-            ( {model | dotString = dot}, getSvg {model | dotString = dot} )
+            let newRefNodes = List.reverse <| List.Extra.unique <| DU.getRefList dot
+                newNodeLabels = List.reverse <| DU.getLabels dot
+                maxLabelLength = 35 -- replace with model variable
+                matchTokens = ["=","⇒","of","in", ";"] -- replace with model variable (recieved from backend)
+                shortenedDot = DU.shortenLabels dot newNodeLabels maxLabelLength matchTokens
+            in ( {model | dotString = dot, shortDotString = shortenedDot, refNodes = newRefNodes, allNodeLabels = newNodeLabels}, getSvg {model | dotString = dot} )
         GotDot (Err httpError) ->
             ( { model | dotString = buildErrorMessage httpError}
             , Cmd.none
             )
         GotSvg (Ok svg) ->
-            ( {model | svgString = stringFindAndReplace svg svgReplace}, Cmd.none)--( {model | svgString = unescape svg}, Cmd.none)
+            ( {model | svgString = stringFindAndReplace svg svgReplace}, Cmd.none)-- SLOW (but complete): ( {model | svgString = unescape svg}, Cmd.none)
         GotSvg (Err httpError) ->
             ( { model | svgString = buildErrorMessage httpError}
             , Cmd.none
@@ -265,7 +279,7 @@ getSvg model =
     Http.post
     { url = krokiURL
         , expect = Http.expectString GotSvg
-        , body = Http.jsonBody <| JE.object [ ("diagram_source", JE.string (.dotString model)), ("layout", JE.string "sfdp") ]
+        , body = Http.jsonBody <| JE.object [ ("diagram_source", JE.string (.shortDotString model)), ("layout", JE.string "sfdp") ]
     }
 
 --Http error to String message funciton
@@ -382,6 +396,9 @@ main =
         , subscriptions = subscriptions
         }
 
+--------------------------------
+-- Begin SVG Functions
+-- Todo: should be in their own file
 
 --Checks a list of svgNodes to see if it contains a title node
 svgNodeListHasTitle : List SvgNode -> Bool
@@ -474,3 +491,16 @@ svgNodeToSvgMod mod input =
                     Err "Top element is not svg"
     in
     parseToNode input |> Result.andThen toHtml
+
+-- END SVG FUNCTIONS
+-------------------------------------
+
+-- Convienience function to show the node map list (id, label), used for debugging, probably not required anymore
+showStrTupList : List (String, String) -> String
+showStrTupList input = case input of
+   [] -> ""
+   (x::xs) -> (showStrTup x " = ") ++ "\n" ++ showStrTupList xs
+showStrTup : (String, String) -> String -> String
+showStrTup (first, second) sep = first ++ sep ++ second
+
+
