@@ -9,8 +9,8 @@ import Http
 import Json.Decode as D
 import Json.Encode as JE
 import Draggable exposing (init)
-import SvgParser exposing(parse, parseToNode, nodeToSvg, SvgNode(..), toAttribute, Element)
-import Svg exposing (Attribute, Svg, node, svg)
+import SvgParser exposing( SvgNode(..))
+import Svg exposing (svg)
 import Html.Attributes exposing (style)
 import Svg.Attributes as Attr
 import Math.Vector2 as Vector2 exposing (Vec2, getX, getY)
@@ -18,6 +18,7 @@ import List.Extra
 
 import DotUtil as DU
 import SvgUtil as SU
+import SvgUtil exposing (modTitle)
 
 type alias Size num =
     { width : num
@@ -49,7 +50,7 @@ init _ =
       , allNodeLabels = []
       , shortDotString = ""
       , zoom = 1
-      , center = Vector2.vec2 750 500
+      , center = Vector2.vec2 375 500--750 500
       , size = Size 1500 1000
       , drag = Draggable.init
       }
@@ -85,7 +86,7 @@ view model =
         ( top, left ) =
             ( cy - halfHeight, cx - halfWidth )
 
-        ( bottom, right ) =
+        ( _, _ ) = --(bottom, right)
             ( cy + halfHeight, cx + halfWidth )
 
         panning =
@@ -93,11 +94,10 @@ view model =
 
         zooming =
             "scale(" ++ String.fromFloat model.zoom ++ ")"
-        makeSvg modelIn = if modelIn.svgString == "" then div [] [] else
-            case svgNodeToSvgMod (identity) (SU.cleanFront (modelIn.svgString)) of
-            --case svgNodeToSvgMod (modNodeTextLength << modTitle) <| SU.cleanFront (modelIn.svgString) of
-               Err msg -> div [] [text msg]
-               Ok (attrs, svgs) ->
+        makeSvg modelIn = if modelIn.svgString == "" then div [style "width" "1500px", style "height" "1000px", style "display" "flex", style "align-items" "center", style "justify-content" "center"] [text "Input a program to begin"] else
+            case SU.svgNodeToSvgMod ((SU.addRefdNodes model.refNodes) >> modTitle model.allNodeLabels) (SU.cleanFront (modelIn.svgString)) of
+               Err msg -> div [style "width" "1500px", style "height" "1000px", style "display" "flex", style "align-items" "center", style "justify-content" "center"] [text msg]
+               Ok (_, svgs) -> -- _ is attrs
                     Svg.svg
                         [ num Attr.width modelIn.size.width
                         , num Attr.height modelIn.size.height
@@ -114,28 +114,31 @@ view model =
     in
     table [] 
         [tr [] 
-            [th [] [text "Input"]
-            ,th [] [text "Output"]
+            [th [] []--[text "Input"]
+            ,th [] []--[text "Output"]
             ]
         , tr []
             [td [ style "vertical-align" "top" ] 
-                [button [onClick Clear] [text "Clear"]
-                ,button [onClick Run] [text "Run"]
-                ,button [onClick LoadEx] [text "LoadEx"]
+                [hr [] []
+                ,textarea [rows 15, cols 60, onInput SaveProg] [text <| .program model]
                 ,hr [] []
-                ,textarea [rows 8, cols 60, onInput SaveProg] [text <| .program model]
+                ,textarea [rows 25, cols 60, onInput SaveFilt] [text <| .filter model]
                 ,hr [] []
-                ,textarea [rows 8, cols 60, onInput SaveFilt] [text <| .filter model]
-                ,hr [] []
+                ,div [style "display" "grid", style "padding" "20px", style "padding-inline" "30px", style "grid-gap" "10px"]
+                    [button [onClick Clear] [b [] <| [text "Clear"]]
+                    ,button [onClick Run] [strong [] <| [text "Run"]]
+                    ,button [onClick LoadEx] [b [] <| [text "Load Example"]]
+                    ]
+        {--     ,hr [] []
                 ,textarea [rows 8, cols 60, onInput ManualSvg] [text <| (.svgString model) ]
                 ,hr [] []
                 ,textarea [rows 8, cols 60, onInput ManualDot] [text <| (.dotString model) ]
-        {--     ,hr [] []
+                ,hr [] []
                 ,textarea [rows 8, cols 60] [text <| String.join ", " <|(.refNodes model) ]
                 ,hr [] []
-                ,textarea [rows 8, cols 60] [text <| showStrTupList <|(.allNodeLabels model) ] --} 
+                ,textarea [rows 8, cols 60] [text <| showStrTupList <|(.allNodeLabels model) ] 
                 ,hr [] []
-                ,textarea [rows 8, cols 60] [text <|(.shortDotString model) ] 
+                ,textarea [rows 8, cols 60] [text <|(.shortDotString model) ] --} 
                 ]
             ,td [style "border-style" "double"] [ makeSvg model ]
             ]
@@ -221,7 +224,7 @@ update msg model =
             , Cmd.none
             )
         GotSvg (Ok svg) ->
-            ( {model | svgString = stringFindAndReplace svg svgReplace}, Cmd.none)-- SLOW (but complete): ( {model | svgString = unescape svg}, Cmd.none)
+            ( {model | svgString = SU.stringFindAndReplace svg SU.svgReplace}, Cmd.none)-- SLOW (but complete): ( {model | svgString = unescape svg}, Cmd.none)
         GotSvg (Err httpError) ->
             ( { model | svgString = buildErrorMessage httpError}
             , Cmd.none
@@ -229,7 +232,7 @@ update msg model =
         ManualDot dot ->
             ( {model | dotString = dot}, getSvg {model | dotString = dot} )
         ManualSvg svg ->
-            ( {model | svgString = stringFindAndReplace svg svgReplace}, Cmd.none )
+            ( {model | svgString = SU.stringFindAndReplace svg SU.svgReplace}, Cmd.none )
         OnDragBy rawDelta ->
             let
                 delta =
@@ -280,7 +283,7 @@ getSvg model =
     Http.post
     { url = krokiURL
         , expect = Http.expectString GotSvg
-        , body = Http.jsonBody <| JE.object [ ("diagram_source", JE.string (.shortDotString model)), ("layout", JE.string "sfdp") ]
+        , body = Http.jsonBody <| JE.object [ ("diagram_source", JE.string (.shortDotString model)), ("layout", JE.string "dot") ]
     }
 
 --Http error to String message funciton
@@ -371,22 +374,6 @@ getNodeExact i =
         (getNodeExact iDiv) ++ (getNodeExact (iRem))
 -}
 
--- Intended to crudely replace html character codes
--- This way (pick and choose relevant) is much faster than an all-inclusive solution
-stringFindAndReplace : String -> List (String,String) -> String
-stringFindAndReplace source list =
-    case list of
-       [] -> source
-       ((match, replacement) :: xs) -> stringFindAndReplace (String.replace match replacement source) xs
-
--- Basic map of html character codes and their replacement
-svgReplace : List (String,String)
-svgReplace =    [("&quot;","\"")
-                ,("&#45;","-")
-                ,("&#32;"," ")
-                ,("&#160;"," ")
-                ,("&gt;",">")]
-
 
 main : Program () Model Msg
 main =
@@ -397,106 +384,8 @@ main =
         , subscriptions = subscriptions
         }
 
---------------------------------
--- Begin SVG Functions
--- Todo: should be in their own file
 
---Checks a list of svgNodes to see if it contains a title node
-svgNodeListHasTitle : List SvgNode -> Bool
-svgNodeListHasTitle nodes =
-    case nodes of
-        [] -> False
-        (n::ns) -> 
-            case n of
-            SvgElement elem -> if elem.name == "title" then True else svgNodeListHasTitle ns
-            _   -> svgNodeListHasTitle ns
-
--- Modifies an SvgNodes innerText, but Only if it's a title
-changeTitleNodeText : String -> SvgNode -> SvgNode
-changeTitleNodeText str node =
-    case node of
-        SvgElement elem ->   if elem.name == "title"
-                            then
-                                SvgElement {elem | children = [SvgText str] }
-                            else
-                                node
-        _ -> node
-
--- Gets a List of all SvgText Strings for all child SvgNodes
-getAllNodesText : SvgNode -> List String
-getAllNodesText node = 
-    case node of
-       SvgComment _ -> []
-       SvgText str -> [str]
-       SvgElement elem -> if elem.name == "title" then [] else List.foldr (\x->\t-> getAllNodesText x ++ t) [] elem.children
-
---Changes Titles to node contents following these rules:
---    If SVGNode has a child SvgElement with name "title"
---        Then modify that child's child SvgText to equal SVGNode's child SvgText
-modTitle : SvgNode -> SvgNode
-modTitle node = case node of
-    SvgComment _ -> node
-    SvgText _ -> node
-    SvgElement elem ->  if svgNodeListHasTitle elem.children 
-                        then
-                        let newTitle = getAllNodesText node in
-                            case List.head newTitle of -- TODO: Kinda bad? Just takes first result, better method?
-                               Just str ->
-                                    let newChildren = List.map (changeTitleNodeText str) elem.children in
-                                        SvgElement {elem | children = List.map modTitle newChildren}
-                               Nothing -> SvgElement {elem | children = List.map modTitle elem.children}
-                        else SvgElement {elem | children = List.map modTitle elem.children}
-
-
-modNodeTextLength : SvgNode -> SvgNode
-modNodeTextLength node = case node of
-    SvgComment _ -> node
-    SvgText str -> if (String.length str) > maxNodeLength then SvgText ((String.left (maxNodeLength - 3) str) ++ "...") else node
-    SvgElement elem -> if elem.name == "title" then node else SvgElement {elem | children = List.map modNodeTextLength elem.children}
-
-maxNodeLength : Int
-maxNodeLength = 20
-
-
---Modified version of SvgParser parse function to include (SvgNode -> SvgNode) modifier function before converting to html
---ToDo: This may again require modification for onCliick??
-parseWithNodeMod : (SvgNode -> SvgNode) -> String -> Result String (Html msg)
-parseWithNodeMod mod input =
-    let 
-        toHtml svgNode =
-            case mod svgNode of
-                SvgElement element ->
-                    if element.name == "svg" then
-                        Ok <|
-                            svg (List.map toAttribute element.attributes)
-                                (List.map nodeToSvg element.children)
-
-                    else
-                        Err "Top element is not svg"
-
-                _ ->
-                    Err "Top element is not svg"
-    in
-    parseToNode input |> Result.andThen toHtml
-
-svgNodeToSvgMod : (SvgNode -> SvgNode) -> String -> Result String (List (Html.Attribute msg), List (Svg msg)) 
-svgNodeToSvgMod mod input =
-    let 
-        toHtml svgNode = 
-            case mod svgNode of
-            SvgElement element ->
-                    if element.name == "svg" then
-                        Ok ((List.map toAttribute element.attributes), (List.map nodeToSvg element.children))
-                    else Err "Top element is not svg"
-            _ -> 
-                    Err "Top element is not svg"
-    in
-    parseToNode input |> Result.andThen toHtml
-
--- END SVG FUNCTIONS
--------------------------------------
-
--- Convienience function to show the node map list (id, label), used for debugging, probably not required anymore
+-- Convienience function to show the node map list (id, label) (used for debugging, probably not required anymore)
 showStrTupList : List (String, String) -> String
 showStrTupList input = case input of
    [] -> ""
