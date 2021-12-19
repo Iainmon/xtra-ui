@@ -3,22 +3,28 @@ module Main exposing (..)
 import Browser
 import Html exposing (..)
 import Html.Events exposing (..)
-import Draggable exposing (Msg)
-import Html.Attributes exposing (rows, cols)
+
+import Html.Attributes exposing (rows, cols, style, type_, checked, placeholder, value, hidden)
+import Html.Events.Extra exposing (targetValueIntParse)
 import Http
 import Json.Decode as D
 import Json.Encode as JE
-import Draggable exposing (init)
+import Draggable exposing (init, Msg)
+import Math.Vector2 as Vector2 exposing (Vec2, getX, getY)
+import DnDList
+
 import SvgParser exposing( SvgNode(..))
 import Svg exposing (svg)
-import Html.Attributes exposing (style)
 import Svg.Attributes as Attr
-import Math.Vector2 as Vector2 exposing (Vec2, getX, getY)
+
 import List.Extra
 
 import DotUtil as DU
 import SvgUtil as SU
-import SvgUtil exposing (modTitle)
+import CustomDecoders as CD
+import UITypes as UT
+
+
 
 type alias Size num =
     { width : num
@@ -36,26 +42,40 @@ type alias Model =
     , center : Vec2
     , size : Size Float
     , drag : Draggable.State ()
+    , initData : UT.InitType
+    , filters : List (String,Bool)
+    , dnd : DnDList.Model
+    , items : List Filter
+    , filtIdCounter : Int
     }
 
 -- Initial state
 -- Todo: Smarter initial values for size and center?
 init : flags -> (Model, Cmd Msg)
-init _ = 
-    ( { program = ""
-      , filter = ""
-      , dotString = ""
-      , svgString = ""
-      , refNodes = []
-      , allNodeLabels = []
-      , shortDotString = ""
-      , zoom = 1
-      , center = Vector2.vec2 375 500--750 500
-      , size = Size 1500 1000
-      , drag = Draggable.init
-      }
-    , Cmd.none
-    )
+init _ = update GetInit initModel
+
+initModel : Model
+initModel = 
+    { program = ""
+    , filter = ""
+    , dotString = ""
+    , svgString = ""
+    , refNodes = []
+    , allNodeLabels = []
+    , shortDotString = ""
+    , zoom = 1
+    , center = Vector2.vec2 375 500--750 500
+    , size = Size 1500 1000
+    , drag = Draggable.init
+    , initData = defaultInitData
+    , filters = []
+    , dnd = system.model
+    , items = []
+    , filtIdCounter = 0
+    }
+
+defaultInitData : UT.InitType
+defaultInitData = {actions=[], funcFormat=(UT.NoFormat "="), filters=[], shortenTokens=[]}
 
 --From Draggable pan/zoom example
 dragConfig : Draggable.Config () Msg
@@ -73,6 +93,9 @@ krokiURL = "http://localhost:8001/graphviz/svg"
 
 xtraBackendURL : String
 xtraBackendURL = "http://localhost:8081/trace"
+
+xtraBackendURLInit : String
+xtraBackendURLInit = "http://localhost:8081/init"
 
 view : Model -> Html Msg
 view model =
@@ -95,7 +118,7 @@ view model =
         zooming =
             "scale(" ++ String.fromFloat model.zoom ++ ")"
         makeSvg modelIn = if modelIn.svgString == "" then div [style "width" "1500px", style "height" "1000px", style "display" "flex", style "align-items" "center", style "justify-content" "center"] [text "Input a program to begin"] else
-            case SU.svgNodeToSvgMod ((SU.addRefdNodes model.refNodes) >> modTitle model.allNodeLabels) (SU.cleanFront (modelIn.svgString)) of
+            case SU.svgNodeToSvgMod ((SU.addRefdNodes model.refNodes) >> SU.modTitle model.allNodeLabels) (SU.cleanFront (modelIn.svgString)) of
                Err msg -> div [style "width" "1500px", style "height" "1000px", style "display" "flex", style "align-items" "center", style "justify-content" "center"] [text msg]
                Ok (_, svgs) -> -- _ is attrs
                     Svg.svg
@@ -122,16 +145,26 @@ view model =
                 [hr [] []
                 ,textarea [rows 15, cols 60, onInput SaveProg] [text <| .program model]
                 ,hr [] []
+                ,textarea [rows 15, cols 60] [text <| filtsToString model]
+                ,hr [] []
                 ,textarea [rows 25, cols 60, onInput SaveFilt] [text <| .filter model]
+                ,hr [] []
+                ,div [style "text-align" "center"] 
+                [
+                    model.items |> List.indexedMap (itemView model) |> Html.div [], ghostView model model.items]
+                ,hr [] []
+                ,div [style "display" "grid", style "padding" "20px", style "padding-inline" "30px", style "grid-gap" "10px"]
+                    [button [onClick AddFilter] [b [] <| [text "(+) Add New Filter"]]
+                    ]
                 ,hr [] []
                 ,div [style "display" "grid", style "padding" "20px", style "padding-inline" "30px", style "grid-gap" "10px"]
                     [button [onClick Clear] [b [] <| [text "Clear"]]
                     ,button [onClick Run] [strong [] <| [text "Run"]]
                     ,button [onClick LoadEx] [b [] <| [text "Load Example"]]
                     ]
-        {--     ,hr [] []
-                ,textarea [rows 8, cols 60, onInput ManualSvg] [text <| (.svgString model) ]
-                ,hr [] []
+        {--       ,hr [] []
+                ,textarea [rows 8, cols 60 ] [text <| UT.initTypeToString <| (.initData model) ]
+        {--}        ,hr [] []
                 ,textarea [rows 8, cols 60, onInput ManualDot] [text <| (.dotString model) ]
                 ,hr [] []
                 ,textarea [rows 8, cols 60] [text <| String.join ", " <|(.refNodes model) ]
@@ -143,6 +176,139 @@ view model =
             ,td [style "border-style" "double"] [ makeSvg model ]
             ]
         ]
+
+filtsToString : Model -> String
+filtsToString model = 
+    let
+        notEnabledInds = List.Extra.findIndices (\filt->not filt.enabled) model.items
+        enabledItems = List.Extra.removeIfIndex (\index->List.member index notEnabledInds) model.items
+    in
+    String.join "\n" <| List.map (filtToString model) enabledItems
+
+filtToString : Model -> Filter -> String
+filtToString model item = 
+    let
+        filt = Maybe.withDefault ("",True) <| List.Extra.getAt item.selectIndex model.filters
+        filtText = Tuple.first filt
+        hasParam = Tuple.second filt
+    in
+    if item.enabled then 
+        if hasParam then
+        filtText ++ " " ++ item.param
+        else
+        filtText
+    else
+        ""
+
+
+itemView : Model -> Int -> Filter -> Html.Html Msg
+itemView model index item =
+    let
+        itemId = "id-filt" ++ String.fromInt item.id
+        dnd = model.dnd
+        dropEvent = system.dropEvents index itemId
+        dragEvent = system.dragEvents index itemId
+    in
+    case system.info dnd of
+        Just {dragIndex} ->
+            if dragIndex /= index then
+                Html.p
+                    (Html.Attributes.id itemId :: dropEvent)--:: system.dropEvents index itemId)
+                    [filterView model item "" []]--[Html.text <| filtToString model item ]
+            else
+                Html.p
+                    [Html.Attributes.id itemId]
+                    [Html.div [style "background-color" "grey"] [ text "<--- Move Filter Here --->" ]]
+        Nothing ->
+            Html.p
+                [Html.Attributes.id itemId] --(Html.Attributes.id itemId :: [])--(Html.Attributes.id itemId :: dragEvent)--:: system.dragEvents index itemId)
+                [filterView model item "" dragEvent]--[Html.text <| filtToString model item ]
+
+ghostView : Model -> List Filter -> Html.Html Msg
+ghostView model items =
+    let
+        dnd = model.dnd
+        maybeDragItem : Maybe Filter
+        maybeDragItem = system.info dnd
+            |> Maybe.andThen (\{ dragIndex } -> items |> List.drop dragIndex |> List.head)
+    in
+    case maybeDragItem of
+        Just item ->
+            Html.p
+                (style "opacity" "0.5" :: system.ghostStyles dnd)
+                [filterView model item "" []]--[Html.text <| filtToString model item]
+        Nothing ->
+            Html.text ""
+
+filterOption : List (String,Bool) -> Int -> Int -> Html msg
+filterOption filts selInd index =
+    let
+        filt = List.Extra.getAt index filts
+        sel = Html.Attributes.selected (index == selInd)
+    in
+    case filt of
+        Just (filtText, _) -> option [value <| String.fromInt index, sel] [text filtText]
+        _ -> option [value "-1"] [text "Invalid filter index"]
+
+filterView : Model -> Filter -> String -> List (Html.Attribute Msg) -> Html.Html Msg
+filterView model item idStr event =
+    let
+        showParam : Bool
+        showParam = Tuple.second <| Maybe.withDefault ("",False) <| List.Extra.getAt item.selectIndex model.filters
+        color = if item.enabled then "green" else "red"
+    in
+    Html.div [style "background-color" color]
+        [ Html.input [type_ "checkbox", onClick <| ToggleCheck item.id, checked item.enabled] []
+        , select [on "change" (D.map (SetFilter item.id) targetValueIntParse)] --drop down list with filters from model, at currently selected index 
+            (List.map (filterOption model.filters item.selectIndex) <| List.range 0 <| (+) (-1) <| List.length model.filters)
+        , input [hidden <| not showParam, placeholder "Filter parameter", value item.param, onInput (UpdateFilterParam item.id)] []--input text box for parameters IF the current filter has one (with event handler for changing)
+        , button (Html.Attributes.id idStr :: style "cursor" "pointer" :: event) [text "\u{2630}"]  --, "handle", use a hamburger iron 
+        , button [onClick <| RemoveFilter item.id] [text "\u{274C}"]
+        ]
+
+--Need way to add and remove filters (More msgs with update handler cases)
+--  Also node click will be a shortcut to add a specific filter
+
+--Finally, need to way to load the total filter list to a string (in order) to make a request 
+
+----------------------------
+-- Drag and Drop Code
+----------------------------
+
+-- Data
+
+type alias Filter = 
+    { enabled : Bool
+    , selectIndex : Int
+    , param : String
+    , id : Int
+    }
+
+filt1 : Filter
+filt1 = {enabled=True, selectIndex=0, param="", id=0}
+filt2 : Filter
+filt2 = {enabled=True, selectIndex=2, param="", id=1}
+filt3 : Filter
+filt3 = {enabled=True, selectIndex=1, param="", id=2}
+
+
+testDnDdata : List Filter
+testDnDdata = [filt1,filt2,filt3]
+
+config : DnDList.Config Filter
+config = 
+    { beforeUpdate = \_ _ list -> list
+    , movement = DnDList.Vertical
+    , listen = DnDList.OnDrag
+    , operation = DnDList.Rotate
+    }
+
+system : DnDList.System Filter Msg
+system = DnDList.create config DndMsg
+
+----------------------------
+-- Draggable Pan/Zoom
+----------------------------
 
 --From Draggable pan/zoom example
 num : (String -> Svg.Attribute msg) -> Float -> Svg.Attribute msg
@@ -174,6 +340,8 @@ type Msg
     | LoadEx 
     | SaveProg String
     | SaveFilt String
+    | GetInit
+    | GotInit (Result Http.Error UT.InitType)
     | GotDot (Result Http.Error String)
     | GotSvg (Result Http.Error String)
     | ManualSvg String
@@ -181,6 +349,12 @@ type Msg
     | DragMsg (Draggable.Msg ())
     | OnDragBy Vec2
     | Zoom Float
+    | DndMsg DnDList.Msg
+    | ToggleCheck Int
+    | SetFilter Int Int
+    | UpdateFilterParam Int String
+    | AddFilter
+    | RemoveFilter Int
 
 -- Now outdated function to  get Svg to embed
 {-- 
@@ -211,6 +385,12 @@ update msg model =
             update Run {model | filter = filt}
         Run ->
             ( model, getDotString model )
+        GetInit ->
+            ( model, getInitData model)
+        GotInit (Ok data) ->
+            ( { model | initData = data, filters = data.filters}, Cmd.none)
+        GotInit (Err httpError) -> -- Problem
+            ( model, Cmd.none)
         GotDot (Ok dot) ->
             let newRefNodes = List.reverse <| List.Extra.unique <| DU.getRefList dot
                 newNodeLabels = List.reverse <| DU.getLabels dot
@@ -250,12 +430,54 @@ update msg model =
             ( { model | zoom = newZoom }, Cmd.none )
         DragMsg dragMsg ->
             Draggable.update dragConfig dragMsg model
+        DndMsg message ->
+            let 
+                (dnd, items) =
+                    system.update message model.dnd model.items
+            in
+            ( {model | dnd = dnd, items = items }
+            , system.commands dnd 
+            )
+        ToggleCheck target ->
+            let
+                newFilters = List.Extra.updateIf (\filt -> filt.id == target) (\filt -> {filt | enabled = not filt.enabled}) model.items
+            in
+            update Run { model | items = newFilters }
+        SetFilter target index ->
+            let
+                newFilters = List.Extra.updateIf (\filt -> filt.id == target) (\filt -> {filt | selectIndex = index}) model.items
+            in
+            update Run { model | items = newFilters }
+        UpdateFilterParam target newParam ->
+            let
+                newFilters = List.Extra.updateIf (\filt -> filt.id == target) (\filt -> {filt | param = newParam}) model.items
+            in
+            update Run { model | items = newFilters }
+        AddFilter ->
+            let
+                newFilters = model.items ++ [{enabled=False, selectIndex=0, param="", id=model.filtIdCounter}]
+            in
+            update Run { model | items = newFilters, filtIdCounter=model.filtIdCounter + 1}
+        RemoveFilter target ->
+            let
+                targetIndex = List.Extra.findIndex (\filt -> filt.id == target) model.items
+                newFilters = case targetIndex of
+                   Just index -> List.Extra.removeAt index model.items
+                   Nothing -> model.items
+            in
+            update Run { model | items = newFilters }
+
+
 
 subscriptions : Model -> Sub Msg
-subscriptions { drag } =
-    Draggable.subscriptions DragMsg drag
+subscriptions model =
+    Sub.batch
+        [ Draggable.subscriptions DragMsg model.drag,
+          system.subscriptions model.dnd
+        ]
+    
 
---Htto request code for getting Dot String from server
+--Http request code for getting Dot String from server
 getDotString : Model -> Cmd Msg
 getDotString model = 
 {--}
@@ -276,6 +498,12 @@ getDotString model =
         , body = Http.jsonBody <| JE.object [ ("prog", JE.string (.program model)), ("filter", JE.string (.filter model))]
     }
 --}
+
+getInitData : Model -> Cmd Msg
+getInitData _ =
+    Http.get
+    { url = xtraBackendURLInit
+    , expect = Http.expectJson GotInit CD.initDecoder }
 
 --Http request code for getting SvgString from Kroki Container
 getSvg : Model -> Cmd Msg
