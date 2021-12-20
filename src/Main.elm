@@ -47,6 +47,7 @@ type alias Model =
     , dnd : DnDList.Model
     , items : List Filter
     , filtIdCounter : Int
+    , exampleIndex : Int
     }
 
 -- Initial state
@@ -72,10 +73,11 @@ initModel =
     , dnd = system.model
     , items = []
     , filtIdCounter = 0
+    , exampleIndex = 0
     }
 
 defaultInitData : UT.InitType
-defaultInitData = {actions=[], funcFormat=(UT.NoFormat "="), filters=[], shortenTokens=[]}
+defaultInitData = {actions=[], funcFormat=(UT.NoFormat "="), filters=[], shortenTokens=[], examples=[]}
 
 --From Draggable pan/zoom example
 dragConfig : Draggable.Config () Msg
@@ -143,39 +145,34 @@ view model =
         , tr []
             [td [ style "vertical-align" "top" ] 
                 [hr [] []
-                ,textarea [rows 15, cols 60, onInput SaveProg] [text <| .program model]
+                ,textarea [rows 10, cols 60, onInput SaveProg] [text <| .program model]
                 ,hr [] []
-                ,textarea [rows 15, cols 60] [text <| filtsToString model]
-                ,hr [] []
-                ,textarea [rows 25, cols 60, onInput SaveFilt] [text <| .filter model]
-                ,hr [] []
+                ,button [onClick AddFilter] [b [] <| [text "(+) Add New Filter"]]
                 ,div [style "text-align" "center"] 
                 [
                     model.items |> List.indexedMap (itemView model) |> Html.div [], ghostView model model.items]
                 ,hr [] []
-                ,div [style "display" "grid", style "padding" "20px", style "padding-inline" "30px", style "grid-gap" "10px"]
-                    [button [onClick AddFilter] [b [] <| [text "(+) Add New Filter"]]
+                ,div [style "margin" "0 auto", style "display" "flex", style "justify-content" "center"]
+                    [select [on "change" (D.map SetExample targetValueIntParse), style "width" "200px", style "height" "50px", style "margin" "10px", style "font-size" "x-large"]
+                        (List.map (exampleOption model.initData.examples model.exampleIndex) <| List.range 0 <| (+) (-1) <| List.length model.initData.examples)
+                    ,button [onClick LoadEx, style "margin" "10px", style "font-size" "medium"] [b [] <| [text "Load Example"]]
+                    ,button [onClick Clear, style "margin" "10px", style "font-size" "medium"] [b [] <| [text "Clear All"]]
                     ]
-                ,hr [] []
-                ,div [style "display" "grid", style "padding" "20px", style "padding-inline" "30px", style "grid-gap" "10px"]
-                    [button [onClick Clear] [b [] <| [text "Clear"]]
-                    ,button [onClick Run] [strong [] <| [text "Run"]]
-                    ,button [onClick LoadEx] [b [] <| [text "Load Example"]]
-                    ]
-        {--       ,hr [] []
-                ,textarea [rows 8, cols 60 ] [text <| UT.initTypeToString <| (.initData model) ]
-        {--}        ,hr [] []
-                ,textarea [rows 8, cols 60, onInput ManualDot] [text <| (.dotString model) ]
-                ,hr [] []
-                ,textarea [rows 8, cols 60] [text <| String.join ", " <|(.refNodes model) ]
-                ,hr [] []
-                ,textarea [rows 8, cols 60] [text <| showStrTupList <|(.allNodeLabels model) ] 
-                ,hr [] []
-                ,textarea [rows 8, cols 60] [text <|(.shortDotString model) ] --} 
                 ]
             ,td [style "border-style" "double"] [ makeSvg model ]
             ]
         ]
+
+exampleOption : List (String, String) -> Int -> Int -> Html msg
+exampleOption examples selInd index =
+    let
+        examp = List.Extra.getAt index examples
+        sel = Html.Attributes.selected (index == selInd)
+    in
+    case examp of
+        Just (exampName, _) -> option [value <| String.fromInt index, sel] [text exampName]
+        _ -> option [value "-1"] [text "Invalid example index"]
+
 
 filtsToString : Model -> String
 filtsToString model = 
@@ -183,20 +180,24 @@ filtsToString model =
         notEnabledInds = List.Extra.findIndices (\filt->not filt.enabled) model.items
         enabledItems = List.Extra.removeIfIndex (\index->List.member index notEnabledInds) model.items
     in
-    String.join "\n" <| List.map (filtToString model) enabledItems
+    String.join "\n" <| List.map (\filt -> String.trim <| filtToString model filt) enabledItems
 
 filtToString : Model -> Filter -> String
 filtToString model item = 
     let
-        filt = Maybe.withDefault ("",True) <| List.Extra.getAt item.selectIndex model.filters
+        actionText = case List.Extra.getAt item.actionIndex model.initData.actions of
+           Just str -> str ++ " "
+           Nothing -> ""
+
+        filt = Maybe.withDefault ("",True) <| List.Extra.getAt item.selectIndex model.initData.filters
         filtText = Tuple.first filt
         hasParam = Tuple.second filt
     in
     if item.enabled then 
         if hasParam then
-        filtText ++ " " ++ item.param
+        actionText ++ filtText ++ " " ++ item.param
         else
-        filtText
+        actionText ++ filtText
     else
         ""
 
@@ -250,17 +251,29 @@ filterOption filts selInd index =
         Just (filtText, _) -> option [value <| String.fromInt index, sel] [text filtText]
         _ -> option [value "-1"] [text "Invalid filter index"]
 
+actionOption : List String -> Int -> Int -> Html msg
+actionOption actions selInd index =
+    let
+        action = List.Extra.getAt index actions
+        sel = Html.Attributes.selected (index == selInd)
+    in
+    case action of
+        Just actionText -> option [value <| String.fromInt index, sel] [text actionText]
+        _ -> option [value "-1"] [text "Invalid filter index"]
+
 filterView : Model -> Filter -> String -> List (Html.Attribute Msg) -> Html.Html Msg
 filterView model item idStr event =
     let
         showParam : Bool
-        showParam = Tuple.second <| Maybe.withDefault ("",False) <| List.Extra.getAt item.selectIndex model.filters
+        showParam = Tuple.second <| Maybe.withDefault ("",False) <| List.Extra.getAt item.selectIndex model.initData.filters
         color = if item.enabled then "green" else "red"
     in
     Html.div [style "background-color" color]
         [ Html.input [type_ "checkbox", onClick <| ToggleCheck item.id, checked item.enabled] []
+        , select [on "change" (D.map (SetAction item.id) targetValueIntParse)] --drop down list with actions
+            (List.map (actionOption model.initData.actions item.actionIndex) <| List.range 0 <| (+) (-1) <| List.length model.initData.actions)
         , select [on "change" (D.map (SetFilter item.id) targetValueIntParse)] --drop down list with filters from model, at currently selected index 
-            (List.map (filterOption model.filters item.selectIndex) <| List.range 0 <| (+) (-1) <| List.length model.filters)
+            (List.map (filterOption model.initData.filters item.selectIndex) <| List.range 0 <| (+) (-1) <| List.length model.initData.filters)
         , input [hidden <| not showParam, placeholder "Filter parameter", value item.param, onInput (UpdateFilterParam item.id)] []--input text box for parameters IF the current filter has one (with event handler for changing)
         , button (Html.Attributes.id idStr :: style "cursor" "pointer" :: event) [text "\u{2630}"]  --, "handle", use a hamburger iron 
         , button [onClick <| RemoveFilter item.id] [text "\u{274C}"]
@@ -278,22 +291,12 @@ filterView model item idStr event =
 -- Data
 
 type alias Filter = 
-    { enabled : Bool
+    { actionIndex : Int
+    , enabled : Bool
     , selectIndex : Int
     , param : String
     , id : Int
     }
-
-filt1 : Filter
-filt1 = {enabled=True, selectIndex=0, param="", id=0}
-filt2 : Filter
-filt2 = {enabled=True, selectIndex=2, param="", id=1}
-filt3 : Filter
-filt3 = {enabled=True, selectIndex=1, param="", id=2}
-
-
-testDnDdata : List Filter
-testDnDdata = [filt1,filt2,filt3]
 
 config : DnDList.Config Filter
 config = 
@@ -353,8 +356,10 @@ type Msg
     | ToggleCheck Int
     | SetFilter Int Int
     | UpdateFilterParam Int String
+    | SetAction Int Int
     | AddFilter
     | RemoveFilter Int
+    | SetExample Int
 
 -- Now outdated function to  get Svg to embed
 {-- 
@@ -376,9 +381,13 @@ update : Msg -> Model -> (Model, Cmd Msg)
 update msg model =
     case msg of
         Clear ->
-            init ()
+            ({model | items = [], program = "", svgString = ""}, Cmd.none)
         LoadEx ->
-            update Run {model | program = exampleProg, filter = exampleFilter, svgString = ""}
+            let example = List.Extra.getAt model.exampleIndex model.initData.examples
+            in
+            case example of
+               Just (_, exampleText) -> update (SaveProg exampleText) model
+               _ -> update (SaveProg "") model
         SaveProg prog ->
             update Run {model | program = prog}
         SaveFilt filt ->
@@ -453,9 +462,15 @@ update msg model =
                 newFilters = List.Extra.updateIf (\filt -> filt.id == target) (\filt -> {filt | param = newParam}) model.items
             in
             update Run { model | items = newFilters }
+        SetAction target index ->
+            let
+                newFilters = List.Extra.updateIf (\filt -> filt.id == target) (\filt -> {filt | actionIndex = index}) model.items
+            in
+            update Run { model | items = newFilters }
+
         AddFilter ->
             let
-                newFilters = model.items ++ [{enabled=False, selectIndex=0, param="", id=model.filtIdCounter}]
+                newFilters = model.items ++ [{actionIndex=0, enabled=False, selectIndex=0, param="", id=model.filtIdCounter}]
             in
             update Run { model | items = newFilters, filtIdCounter=model.filtIdCounter + 1}
         RemoveFilter target ->
@@ -466,6 +481,8 @@ update msg model =
                    Nothing -> model.items
             in
             update Run { model | items = newFilters }
+        SetExample index ->
+            ({model | exampleIndex = index}, Cmd.none)
 
 
 
@@ -484,7 +501,7 @@ getDotString model =
     Http.post
     { url = xtraBackendURL
         , expect = Http.expectJson GotDot (D.field "dot" D.string)
-        , body = Http.jsonBody <| JE.object [ ("prog", JE.string (.program model)), ("filter", JE.string (.filter model))]
+        , body = Http.jsonBody <| JE.object [ ("prog", JE.string (.program model)), ("filter", JE.string (filtsToString model))]
     }
 --}
 {--

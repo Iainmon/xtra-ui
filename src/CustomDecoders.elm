@@ -1,6 +1,6 @@
 module CustomDecoders exposing (..)
 
-import Json.Decode exposing (Decoder, field, list, string, map3, map4, index, succeed, bool)
+import Json.Decode exposing (Decoder, field, list, string, map3, map5, index, succeed, bool)
 import Json.Decode.Extra as DE
 import UITypes exposing (InitType,FunctionFormat(..))
 
@@ -18,6 +18,13 @@ filterDecoder =
         |> DE.andMap (field "name" string)
         |> DE.andMap (field "param" bool)
 
+examplesDecoder : Decoder (List (String,String))
+examplesDecoder = field "examples" (list exampleDecoder)
+exampleDecoder : Decoder (String,String)
+exampleDecoder = 
+    succeed Tuple.pair
+        |> DE.andMap (field "progName" string)
+        |> DE.andMap (field "progText" string)
 
 shortenTokensDecoder : Decoder (List String)
 shortenTokensDecoder = field "shortenTokens" (list string)
@@ -27,4 +34,4 @@ functionFormatDecoder = map3 FunctionFormat (index 0 string) (index 1 string) (i
 
 
 initDecoder : Decoder (InitType)
-initDecoder = map4 InitType actionsDecoder funcFormatDecoder filtersDecoder shortenTokensDecoder
+initDecoder = map5 InitType actionsDecoder funcFormatDecoder filtersDecoder shortenTokensDecoder examplesDecoder

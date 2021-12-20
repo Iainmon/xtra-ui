@@ -5,6 +5,7 @@ type alias InitType =
     , funcFormat : FunctionFormat
     , filters : List (String,Bool)
     , shortenTokens : List String
+    , examples : List (String,String)
     }
 
 type FilterInput
