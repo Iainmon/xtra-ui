@@ -7,7 +7,10 @@
     "dependencies": {
         "direct": {
             "Garados007/elm-svg-parser": "1.0.0",
+            "Janiczek/cmd-extra": "1.1.0",
             "annaghi/dnd-list": "6.0.1",
+            "billstclair/elm-localstorage": "7.3.1",
+            "billstclair/elm-port-funnel": "1.1.1",
             "brandly/elm-dot-lang": "1.1.6",
             "elm/browser": "1.0.2",
             "elm/core": "1.0.5",
@@ -24,17 +27,21 @@
             "hecrj/html-parser": "2.4.0",
             "marcosh/elm-html-to-unicode": "1.0.4",
             "myrho/elm-round": "1.0.4",
+            "rundis/elm-bootstrap": "5.2.0",
             "zaboco/elm-draggable": "5.0.0"
         },
         "indirect": {
             "andre-dietrich/parser-combinators": "3.2.0",
+            "avh4/elm-color": "1.0.0",
             "elm/bytes": "1.0.8",
             "elm/file": "1.0.5",
             "elm/time": "1.0.0",
             "elm/url": "1.0.0",
             "elm/virtual-dom": "1.0.2",
+            "elm-community/dict-extra": "2.4.0",
             "mpizenberg/elm-pointer-events": "4.0.2",
             "pilatch/flip": "1.0.0",
+            "pzp1997/assoc-list": "1.0.0",
             "rtfeldman/elm-hex": "1.0.0",
             "rtfeldman/elm-iso8601-date-strings": "1.1.4"
         }

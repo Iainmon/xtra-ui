@@ -8,10 +8,12 @@ import Html.Attributes exposing (rows, cols, style, type_, checked, placeholder,
 import Html.Events.Extra exposing (targetValueIntParse)
 import Http
 import Json.Decode as D
+import Json.Decode.Extra as DE
 import Json.Encode as JE
 import Draggable exposing (init, Msg)
 import Math.Vector2 as Vector2 exposing (Vec2, getX, getY)
 import DnDList
+import Bootstrap.Alert as Alert
 
 import SvgParser exposing( SvgNode(..))
 import Svg exposing (svg)
@@ -23,8 +25,16 @@ import DotUtil as DU
 import SvgUtil as SU
 import CustomDecoders as CD
 import UITypes as UT
+import List.Extra exposing (updateIf)
+import Html.Attributes exposing (alt)
 
+import PortFunnel.LocalStorage as LocalStorage
+    exposing ( Key, Message, Response(..))
 
+import Cmd.Extra exposing (addCmd, addCmds, withCmd, withCmds, withNoCmd)
+import PortFunnels exposing (FunnelDict, Handler(..))
+import Dict exposing (Dict)
+import Dict exposing (empty)
 
 type alias Size num =
     { width : num
@@ -48,7 +58,19 @@ type alias Model =
     , items : List Filter
     , filtIdCounter : Int
     , exampleIndex : Int
+    , error : String
+    , errorVis : Alert.Visibility
+    , useSimulator : Bool
+    , wasLoaded : Bool
+    , funnelState : PortFunnels.State
+    , savedGraphKeys : List String
+    , saveName : String
+    , selectedSaveGraph : Int
     }
+
+prefix : String
+prefix =
+    "xtraui"
 
 -- Initial state
 -- Todo: Smarter initial values for size and center?
@@ -74,7 +96,48 @@ initModel =
     , items = []
     , filtIdCounter = 0
     , exampleIndex = 0
+    , error = ""
+    , errorVis = Alert.closed
+    , useSimulator = False
+    , wasLoaded = False
+    , funnelState = PortFunnels.initialState prefix
+    , savedGraphKeys = []
+    , saveName = ""
+    , selectedSaveGraph = 0
     }
+
+doIsLoaded : Model -> Model
+doIsLoaded model =
+    if not model.wasLoaded && LocalStorage.isLoaded model.funnelState.storage then
+        { model | useSimulator = False, wasLoaded = True}
+    else model
+
+storageHandler : LocalStorage.Response -> PortFunnels.State -> Model -> ( Model, Cmd Msg )
+storageHandler response state mdl =
+    let model = doIsLoaded { mdl | funnelState = state }
+    in
+    case response of
+        LocalStorage.GetResponse { label, key, value } ->
+            case value of
+                Nothing -> update (AlertMsg Alert.shown) {model | error = "Empty result"}
+                Just v -> update Run (loadSavedGraphToModel model (decodeSavedGraphs v))
+        LocalStorage.ListKeysResponse { label, keys } ->
+            {model | savedGraphKeys = keys} |> withNoCmd
+        _ ->  update ListGraphKeys model
+
+funnelDict : FunnelDict Model Msg
+funnelDict =
+    PortFunnels.makeFunnelDict [ LocalStorageHandler storageHandler ] getCmdPort
+
+getCmdPort : String -> Model -> (JE.Value -> Cmd Msg)
+getCmdPort moduleName model =
+    PortFunnels.getCmdPort Process moduleName model.useSimulator
+
+send : Message -> Model -> Cmd Msg
+send message model =
+    LocalStorage.send (getCmdPort LocalStorage.moduleName model)
+        message
+        model.funnelState.storage
 
 defaultInitData : UT.InitType
 defaultInitData = {actions=[], funcFormat=(UT.NoFormat "="), filters=[], shortenTokens=[], examples=[]}
@@ -139,13 +202,13 @@ view model =
     in
     table [] 
         [tr [] 
-            [th [] []--[text "Input"]
-            ,th [] []--[text "Output"]
+            [th [] []
+            ,th [] []
             ]
         , tr []
             [td [ style "vertical-align" "top" ] 
                 [hr [] []
-                ,textarea [rows 10, cols 60, onInput SaveProg] [text <| .program model]
+                ,textarea [rows 10, cols 60, onInput SaveProg, value model.program] []
                 ,hr [] []
                 ,button [onClick AddFilter] [b [] <| [text "(+) Add New Filter"]]
                 ,div [style "text-align" "center"] 
@@ -158,10 +221,42 @@ view model =
                     ,button [onClick LoadEx, style "margin" "10px", style "font-size" "medium"] [b [] <| [text "Load Example"]]
                     ,button [onClick Clear, style "margin" "10px", style "font-size" "medium"] [b [] <| [text "Clear All"]]
                     ]
+                
+                ,div [style "margin" "0 auto", style "display" "flex", style "justify-content" "center"] [
+                    input [onInput UpdateName, value model.saveName, style "width" "200px"] []
+                    ,button [onClick SaveGraph, style "margin" "10px", style "font-size" "medium"] [b [] <| [text "Save Program"]]
+                ]
+                ,hr [] []
+                ,div [style "margin" "0 auto", style "display" "flex", style "justify-content" "center"]
+                    [select [on "change" (D.map SetTargetSaved targetValueIntParse), style "width" "200px", style "height" "50px", style "margin" "10px", style "font-size" "x-large"]
+                        (List.map (savedGraphOption model.savedGraphKeys model.selectedSaveGraph) <| List.range 0 <| (+) (-1) <| List.length model.savedGraphKeys)
+                    ,button [onClick LoadSavedGraph, style "margin" "10px", style "font-size" "medium"] [b [] <| [text "Load"]]
+                    ,button [onClick DeleteSavedGraph, style "margin" "10px", style "font-size" "medium"] [b [] <| [text "Delete"]]
+                    ]
+                ,div [style "width" "550px"] [
+                    Alert.config
+                        |> Alert.info
+                        |> Alert.dismissableWithAnimation AlertMsg
+                        |> Alert.children
+                            [ Alert.h4 [] [ text "Error" ]
+                            , text <| model.error
+                            ]
+                        |> Alert.view model.errorVis
+                    ]
                 ]
             ,td [style "border-style" "double"] [ makeSvg model ]
             ]
         ]
+
+savedGraphOption : List String -> Int -> Int -> Html msg
+savedGraphOption keys selInd index =
+    let
+        name = List.Extra.getAt index keys
+        sel = Html.Attributes.selected (index == selInd)
+    in
+    case name of
+        Just savedName -> option [value <| String.fromInt index, sel] [text savedName]
+        _ -> option [value "-1"] [text "Invalid example index"]
 
 exampleOption : List (String, String) -> Int -> Int -> Html msg
 exampleOption examples selInd index =
@@ -298,6 +393,63 @@ type alias Filter =
     , id : Int
     }
 
+filterToJSON : Filter -> JE.Value
+filterToJSON input = 
+    JE.object 
+        [ ("actionIndex", JE.int input.actionIndex)
+        , ("enabled", JE.bool input.enabled)
+        , ("selectIndex", JE.int input.selectIndex)
+        , ("param", JE.string input.param)
+        , ("id", JE.int input.id)
+        ]
+
+jsonToFilterList : D.Decoder (List Filter)
+jsonToFilterList = D.field "filters" (D.list jsonToFilter)
+
+jsonToFilter : D.Decoder (Filter)
+jsonToFilter = 
+    D.map5 Filter 
+        (D.field "actionIndex" D.int) 
+        (D.field "enabled" D.bool) 
+        (D.field "selectIndex" D.int) 
+        (D.field "param" D.string) 
+        (D.field "id" D.int)
+
+type alias SavedGraph =
+    { program : String
+    , filters : List Filter
+    }
+
+savedGraphsToJSON : List SavedGraph -> JE.Value
+savedGraphsToJSON input =
+    JE.list savedGraphToJSON input
+
+savedGraphToJSON : SavedGraph -> JE.Value
+savedGraphToJSON input =
+    JE.object
+        [ ("program", JE.string input.program)
+        , ("filters", JE.list filterToJSON input.filters)
+        ]
+
+decodeSavedGraphs : JE.Value -> SavedGraph
+decodeSavedGraphs value =
+    case D.decodeValue jsonToSavedGraph value of
+        Ok res -> res
+        Err err -> {program = D.errorToString err, filters=[]}
+
+
+jsonToSavedGraph : D.Decoder (SavedGraph)
+jsonToSavedGraph = 
+    D.map2 SavedGraph
+        (D.field "program" D.string)
+        (jsonToFilterList)
+
+getCurrentGraph : Model -> SavedGraph
+getCurrentGraph model = {program = model.program, filters = model.items}
+
+loadSavedGraphToModel : Model -> SavedGraph -> Model
+loadSavedGraphToModel model gr = {model | program= gr.program, items=gr.filters}  
+
 config : DnDList.Config Filter
 config = 
     { beforeUpdate = \_ _ list -> list
@@ -345,7 +497,7 @@ type Msg
     | SaveFilt String
     | GetInit
     | GotInit (Result Http.Error UT.InitType)
-    | GotDot (Result Http.Error String)
+    | GotDot (Result Http.Error (String,String))
     | GotSvg (Result Http.Error String)
     | ManualSvg String
     | ManualDot String
@@ -360,6 +512,14 @@ type Msg
     | AddFilter
     | RemoveFilter Int
     | SetExample Int
+    | AlertMsg Alert.Visibility
+    | SaveGraph
+    | Process JE.Value
+    | ListGraphKeys
+    | UpdateName String
+    | SetTargetSaved Int
+    | LoadSavedGraph
+    | DeleteSavedGraph
 
 -- Now outdated function to  get Svg to embed
 {-- 
@@ -397,27 +557,31 @@ update msg model =
         GetInit ->
             ( model, getInitData model)
         GotInit (Ok data) ->
-            ( { model | initData = data, filters = data.filters}, Cmd.none)
+            update ListGraphKeys { model | initData = data, filters = data.filters} 
         GotInit (Err httpError) -> -- Problem
             ( model, Cmd.none)
-        GotDot (Ok dot) ->
-            let newRefNodes = List.reverse <| List.Extra.unique <| DU.getRefList dot
-                newNodeLabels = List.reverse <| DU.getLabels dot
-                maxLabelLength = 35 -- replace with model variable
-                matchTokens = ["=","⇒","of","in", ";"] -- replace with model variable (recieved from backend)
-                shortenedDot = DU.shortenLabels dot newNodeLabels maxLabelLength matchTokens
-                newModel = {model | dotString = dot, shortDotString = shortenedDot, refNodes = newRefNodes, allNodeLabels = newNodeLabels}
-            in ( newModel, getSvg newModel )
+        GotDot (Ok (dot, error)) ->
+            case error of
+            "" -> 
+                let newRefNodes = List.reverse <| List.Extra.unique <| DU.getRefList dot
+                    newNodeLabels = List.reverse <| DU.getLabels dot
+                    maxLabelLength = 35 -- replace with model variable
+                    matchTokens = ["=","⇒","of","in", ";"] -- replace with model variable (recieved from backend)
+                    shortenedDot = DU.shortenLabels dot newNodeLabels maxLabelLength matchTokens
+                    newModel = {model | dotString = dot, shortDotString = shortenedDot, refNodes = newRefNodes, allNodeLabels = newNodeLabels}
+                in ( newModel, getSvg newModel )
+            err -> update (AlertMsg Alert.shown) {model | error = err}
+
+
         GotDot (Err httpError) ->
             ( { model | dotString = buildErrorMessage httpError}
             , Cmd.none
             )
         GotSvg (Ok svg) ->
-            ( {model | svgString = SU.stringFindAndReplace svg SU.svgReplace}, Cmd.none)-- SLOW (but complete): ( {model | svgString = unescape svg}, Cmd.none)
+            update (AlertMsg Alert.closed) {model | svgString = SU.stringFindAndReplace svg SU.svgReplace} 
+            -- SLOW (but complete): ( {model | svgString = unescape svg}, Cmd.none)
         GotSvg (Err httpError) ->
-            ( { model | svgString = buildErrorMessage httpError}
-            , Cmd.none
-            )
+            update (AlertMsg Alert.shown) { model | error = buildErrorMessage httpError}
         ManualDot dot ->
             ( {model | dotString = dot}, getSvg {model | dotString = dot} )
         ManualSvg svg ->
@@ -483,38 +647,62 @@ update msg model =
             update Run { model | items = newFilters }
         SetExample index ->
             ({model | exampleIndex = index}, Cmd.none)
+        AlertMsg vis ->
+            ({ model | errorVis = vis }, Cmd.none)
+        LoadSavedGraph ->
+            let targetKey = List.Extra.getAt model.selectedSaveGraph model.savedGraphKeys
+            in
+            case targetKey of
+                Just targ -> {model | saveName = targ} |> withCmd (send (LocalStorage.get targ) {model | saveName = targ})
+                _ -> update (AlertMsg Alert.shown) { model | error = "Selected Saved Program has an invalid index" }
+        SaveGraph ->
+            if List.member model.saveName model.savedGraphKeys then
+                update (AlertMsg Alert.shown) { model | error = "Please enter a unique name to save your program" }
+            else
+                case model.saveName of
+                    "" -> update (AlertMsg Alert.shown) { model | error = "Please enter a name to save your program" }
+                    name -> model |> withCmd (send (LocalStorage.put name (Just <| savedGraphToJSON <| getCurrentGraph model)) model)
+        Process value ->
+            case PortFunnels.processValue funnelDict value model.funnelState model
+            of
+                Err error -> update (AlertMsg Alert.shown) { model | error = error }
+                Ok res -> res
+        ListGraphKeys ->
+            {model | savedGraphKeys = []} |> withCmd (send (LocalStorage.listKeys "") model)
+        UpdateName value ->
+            {model | saveName = value} |> withNoCmd
+        SetTargetSaved index ->
+            ({model | selectedSaveGraph = index}, Cmd.none)
+        DeleteSavedGraph ->
+            let targetKey = List.Extra.getAt model.selectedSaveGraph model.savedGraphKeys
+                upModel = {model | selectedSaveGraph = max 0 (model.selectedSaveGraph - 1)}
+            in
+            case targetKey of
+                Just targ -> upModel |> withCmd (send (LocalStorage.put targ Nothing) upModel)
+                _ -> update (AlertMsg Alert.shown) { model | error = "Selected Saved Program has an invalid index" }
 
 
 
 subscriptions : Model -> Sub Msg
 subscriptions model =
     Sub.batch
-        [ Draggable.subscriptions DragMsg model.drag,
-          system.subscriptions model.dnd
+        [ Draggable.subscriptions DragMsg model.drag
+        , system.subscriptions model.dnd
+        , Alert.subscriptions model.errorVis AlertMsg
+        , PortFunnels.subscriptions Process model
         ]
     
 
 --Http request code for getting Dot String from server
 getDotString : Model -> Cmd Msg
 getDotString model = 
-{--}
     Http.post
     { url = xtraBackendURL
-        , expect = Http.expectJson GotDot (D.field "dot" D.string)
+        , expect = Http.expectJson GotDot (D.succeed Tuple.pair 
+                                            |> DE.andMap (D.field "dot" D.string)
+                                            |> DE.andMap (D.field "error" D.string))
         , body = Http.jsonBody <| JE.object [ ("prog", JE.string (.program model)), ("filter", JE.string (filtsToString model))]
     }
---}
-{--
-    Http.request
-    {   url = xtraBackendURL
-        , method = "GET"
-        , headers = []
-        , timeout = Nothing
-        , tracker = Nothing
-        , expect = Http.expectJson GotDot (D.field "dot" D.string)
-        , body = Http.jsonBody <| JE.object [ ("prog", JE.string (.program model)), ("filter", JE.string (.filter model))]
-    }
---}
 
 getInitData : Model -> Cmd Msg
 getInitData _ =
@@ -619,7 +807,6 @@ getNodeExact i =
         (getNodeExact iDiv) ++ (getNodeExact (iRem))
 -}
 
-
 main : Program () Model Msg
 main =
     Browser.element
@@ -631,11 +818,14 @@ main =
 
 
 -- Convienience function to show the node map list (id, label) (used for debugging, probably not required anymore)
+{-
 showStrTupList : List (String, String) -> String
 showStrTupList input = case input of
    [] -> ""
    (x::xs) -> (showStrTup x " = ") ++ "\n" ++ showStrTupList xs
 showStrTup : (String, String) -> String -> String
 showStrTup (first, second) sep = first ++ sep ++ second
+-}
+
 
 
