@@ -31,10 +31,16 @@ import Html.Attributes exposing (alt)
 import PortFunnel.LocalStorage as LocalStorage
     exposing ( Key, Message, Response(..))
 
-import Cmd.Extra exposing (addCmd, addCmds, withCmd, withCmds, withNoCmd)
+import Cmd.Extra exposing (addCmd, addCmds, withCmd, withCmds, withNoCmd, andThen)
 import PortFunnels exposing (FunnelDict, Handler(..))
 import Dict exposing (Dict)
 import Dict exposing (empty)
+import Url.Parser.Query as PQ
+import Url.Parser exposing ((<?>))
+import Url.Parser as UP
+import Url
+import Base64 as B64
+
 
 type alias Size num =
     { width : num
@@ -66,19 +72,49 @@ type alias Model =
     , savedGraphKeys : List String
     , saveName : String
     , selectedSaveGraph : Int
+    , url : Maybe Url.Url
+    , share : String
+    , generatedShare : String
+    , dirty : Bool
     }
+
+queryParser : String -> String
+queryParser url = case Url.fromString url of
+    Nothing -> ""
+    Just a -> case a.query of
+        Nothing -> ""
+        Just b -> b
 
 prefix : String
 prefix =
     "xtraui"
 
+type alias Flags = { url : String }
+
 -- Initial state
 -- Todo: Smarter initial values for size and center?
-init : flags -> (Model, Cmd Msg)
-init _ = update GetInit initModel
+init : Flags -> (Model, Cmd Msg)
+init flags =
+    let model = initModel flags.url in
+    case model.share of
+        "" -> update GetInit model
+        a -> case B64.decode a of
+            Err b -> let modelErrShare = {model | share = "Error: " ++ b} in
+                update GetInit <| modelErrShare
+            Ok c -> 
+                let modelGoodShare = {model | share = c}
+                    sharedGraph = D.decodeString jsonToSavedGraph modelGoodShare.share
+                in
+                case sharedGraph of
+                    Ok g -> 
+                        let modelWithShareLoaded = loadSavedGraphToModel modelGoodShare g
+                        in
+                        update GetInit <| modelWithShareLoaded
+                    _ -> update GetInit <| modelGoodShare
 
-initModel : Model
-initModel = 
+
+initModel : String -> Model
+initModel location = 
     { program = ""
     , filter = ""
     , dotString = ""
@@ -104,6 +140,10 @@ initModel =
     , savedGraphKeys = []
     , saveName = ""
     , selectedSaveGraph = 0
+    , url = Url.fromString location
+    , share = queryParser location -- location --
+    , generatedShare = ""
+    , dirty = False
     }
 
 doIsLoaded : Model -> Model
@@ -122,7 +162,8 @@ storageHandler response state mdl =
                 Nothing -> update (AlertMsg Alert.shown) {model | error = "Empty result"}
                 Just v -> update Run (loadSavedGraphToModel model (decodeSavedGraphs v))
         LocalStorage.ListKeysResponse { label, keys } ->
-            {model | savedGraphKeys = keys} |> withNoCmd
+            update RunShare {model | savedGraphKeys = keys}
+            --{model | savedGraphKeys = keys} |> withCmd Run
         _ ->  update ListGraphKeys model
 
 funnelDict : FunnelDict Model Msg
@@ -199,6 +240,11 @@ view model =
                             , Attr.class "graph"
                             ] svgs 
                         )]
+        shareB64 = getCurrentGraph model |> savedGraphToJSON |> JE.encode 0 |> B64.encode
+        baseUrl = case model.url of
+            Nothing -> ""
+            Just a -> Url.toString a |> String.split "?" |> List.head |> Maybe.withDefault ""
+        shareUrl = baseUrl ++ "?" ++ shareB64
     in
     table [] 
         [tr [] 
@@ -243,6 +289,8 @@ view model =
                             ]
                         |> Alert.view model.errorVis
                     ]
+                ,hr [] []
+                ,textarea [rows 10, cols 60, value shareUrl] []
                 ]
             ,td [style "border-style" "double"] [ makeSvg model ]
             ]
@@ -520,6 +568,7 @@ type Msg
     | SetTargetSaved Int
     | LoadSavedGraph
     | DeleteSavedGraph
+    | RunShare
 
 -- Now outdated function to  get Svg to embed
 {-- 
@@ -648,7 +697,10 @@ update msg model =
         SetExample index ->
             ({model | exampleIndex = index}, Cmd.none)
         AlertMsg vis ->
-            ({ model | errorVis = vis }, Cmd.none)
+            if model.dirty then
+                update ListGraphKeys { model | errorVis = vis, dirty = False }
+            else
+                ({ model | errorVis = vis }, Cmd.none)
         LoadSavedGraph ->
             let targetKey = List.Extra.getAt model.selectedSaveGraph model.savedGraphKeys
             in
@@ -661,7 +713,10 @@ update msg model =
             else
                 case model.saveName of
                     "" -> update (AlertMsg Alert.shown) { model | error = "Please enter a name to save your program" }
-                    name -> model |> withCmd (send (LocalStorage.put name (Just <| savedGraphToJSON <| getCurrentGraph model)) model)
+                    name ->
+                        let newModel = {model | dirty=True, savedGraphKeys=(name :: model.savedGraphKeys), selectedSaveGraph=0, saveName=""}
+                        in
+                        newModel |> withCmd (send (LocalStorage.put name (Just <| savedGraphToJSON <| getCurrentGraph model)) newModel)
         Process value ->
             case PortFunnels.processValue funnelDict value model.funnelState model
             of
@@ -674,13 +729,18 @@ update msg model =
         SetTargetSaved index ->
             ({model | selectedSaveGraph = index}, Cmd.none)
         DeleteSavedGraph ->
-            let targetKey = List.Extra.getAt model.selectedSaveGraph model.savedGraphKeys
-                upModel = {model | selectedSaveGraph = max 0 (model.selectedSaveGraph - 1)}
-            in
-            case targetKey of
-                Just targ -> upModel |> withCmd (send (LocalStorage.put targ Nothing) upModel)
-                _ -> update (AlertMsg Alert.shown) { model | error = "Selected Saved Program has an invalid index" }
 
+            case List.Extra.getAt model.selectedSaveGraph model.savedGraphKeys of
+                Just targ -> 
+                    let updatedKeys = List.Extra.remove targ model.savedGraphKeys
+                        upModel = {model | selectedSaveGraph = max 0 (model.selectedSaveGraph - 1), savedGraphKeys=updatedKeys} 
+                    in
+                    upModel |> withCmd (send (LocalStorage.put targ Nothing) upModel)
+                _ -> update (AlertMsg Alert.shown) { model | error = "Selected Saved Program has an invalid index" }
+        RunShare ->
+            case model.share of
+                "" -> (model,Cmd.none)
+                _ -> (model,getDotString model)
 
 
 subscriptions : Model -> Sub Msg
@@ -807,7 +867,7 @@ getNodeExact i =
         (getNodeExact iDiv) ++ (getNodeExact (iRem))
 -}
 
-main : Program () Model Msg
+main : Program {url : String} Model Msg
 main =
     Browser.element
         { init = init
