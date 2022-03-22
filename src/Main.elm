@@ -1,4 +1,4 @@
-module Main exposing (..)
+port module Main exposing (..)
 
 import Browser
 import Html exposing (..)
@@ -26,7 +26,7 @@ import SvgUtil as SU
 import CustomDecoders as CD
 import UITypes as UT
 import List.Extra exposing (updateIf)
-import Html.Attributes exposing (alt)
+--import Html.Attributes exposing (alt)
 
 import PortFunnel.LocalStorage as LocalStorage
     exposing ( Key, Message, Response(..))
@@ -40,11 +40,20 @@ import Url.Parser exposing ((<?>))
 import Url.Parser as UP
 import Url
 import Base64 as B64
+import Svg.Events exposing (on)
+import Tuple3
 
 
 type alias Size num =
     { width : num
     , height : num
+    }
+
+type alias ContextMenu =
+    { nodeClicked : Int,
+      mouseX : Int,
+      mouseY : Int,
+      show : Bool
     }
 type alias Model = 
     { program : String
@@ -76,6 +85,8 @@ type alias Model =
     , share : String
     , generatedShare : String
     , dirty : Bool
+    , nodeContext : ContextMenu
+    , cbRes : Bool
     }
 
 queryParser : String -> String
@@ -144,7 +155,12 @@ initModel location =
     , share = queryParser location -- location --
     , generatedShare = ""
     , dirty = False
+    , nodeContext = ContextMenu 0 0 0 False
+    , cbRes = False
     }
+
+port clipboardCopy : String -> Cmd msg
+port clipboardRes : (Bool -> msg) -> Sub msg
 
 doIsLoaded : Model -> Model
 doIsLoaded model =
@@ -232,7 +248,7 @@ view model =
                         , num Attr.height modelIn.size.height
                         , handleZoom Zoom
                         , Draggable.mouseTrigger () DragMsg
-                      --  , onClick SVGClicked
+                        , clickHandler NodeClicked
                         ]
                         [(Svg.g 
                             [ Attr.transform (zooming ++ " " ++ panning)
@@ -262,7 +278,7 @@ view model =
                     model.items |> List.indexedMap (itemView model) |> Html.div [], ghostView model model.items]
                 ,hr [] []
                 ,div [style "margin" "0 auto", style "display" "flex", style "justify-content" "center"]
-                    [select [on "change" (D.map SetExample targetValueIntParse), style "width" "200px", style "height" "50px", style "margin" "10px", style "font-size" "x-large"]
+                    [select [Html.Events.on "change" (D.map SetExample targetValueIntParse), style "width" "200px", style "height" "50px", style "margin" "10px", style "font-size" "x-large"]
                         (List.map (exampleOption model.initData.examples model.exampleIndex) <| List.range 0 <| (+) (-1) <| List.length model.initData.examples)
                     ,button [onClick LoadEx, style "margin" "10px", style "font-size" "medium"] [b [] <| [text "Load Example"]]
                     ,button [onClick Clear, style "margin" "10px", style "font-size" "medium"] [b [] <| [text "Clear All"]]
@@ -274,7 +290,7 @@ view model =
                 ]
                 ,hr [] []
                 ,div [style "margin" "0 auto", style "display" "flex", style "justify-content" "center"]
-                    [select [on "change" (D.map SetTargetSaved targetValueIntParse), style "width" "200px", style "height" "50px", style "margin" "10px", style "font-size" "x-large"]
+                    [select [Html.Events.on "change" (D.map SetTargetSaved targetValueIntParse), style "width" "200px", style "height" "50px", style "margin" "10px", style "font-size" "x-large"]
                         (List.map (savedGraphOption model.savedGraphKeys model.selectedSaveGraph) <| List.range 0 <| (+) (-1) <| List.length model.savedGraphKeys)
                     ,button [onClick LoadSavedGraph, style "margin" "10px", style "font-size" "medium"] [b [] <| [text "Load"]]
                     ,button [onClick DeleteSavedGraph, style "margin" "10px", style "font-size" "medium"] [b [] <| [text "Delete"]]
@@ -290,11 +306,46 @@ view model =
                         |> Alert.view model.errorVis
                     ]
                 ,hr [] []
-                ,textarea [rows 10, cols 60, value shareUrl] []
+                ,div [] 
+                  [ input [cols 60, value shareUrl] []
+                  , button [onClick <| CBCopy shareUrl] [text "Copy to Clipboard"]
+                  , if (model.cbRes) then div [] [text "Link Copied", button [onClick HideCBRes] [text "X"]] else div [] []
+                  ]
+                ,showContext model
                 ]
             ,td [style "border-style" "double"] [ makeSvg model ]
             ]
         ]
+
+
+clickHandler : ((String, Int, Int) -> msg) -> Svg.Attribute msg
+clickHandler msg = 
+  let targetId = D.at ["target", "parentNode", "id"] D.string
+      mouseX = D.at ["clientX"] D.int
+      mouseY = D.at ["clientY"] D.int
+  in
+  Svg.Events.on "click" (D.map msg <| D.map3 Tuple3.join targetId mouseX mouseY)
+
+showContext : Model -> Html msg
+showContext mdl = 
+  if mdl.nodeContext.show then 
+    div 
+      [ style "position" "absolute"
+      , style "left" (String.fromInt mdl.nodeContext.mouseX |> flip (++) "px")
+      , style "top" (String.fromInt mdl.nodeContext.mouseY |> flip (++) "px")
+      , style "border" "3px solid black"
+      , style "background-color" "rgb(200,200,200)"
+      , style "display" "table-row"
+      ]
+      [ div [] ["Node Selected: " ++ (String.fromInt mdl.nodeContext.nodeClicked) |> text]
+      , div [] ["MouseX: " ++ (String.fromInt mdl.nodeContext.mouseX) |> text]
+      , div [] ["MouseY: " ++ (String.fromInt mdl.nodeContext.mouseY) |> text]
+      ]
+  else
+    div [] []
+
+flip : (a -> b -> c) -> b -> a -> c
+flip f b a = f a b
 
 savedGraphOption : List String -> Int -> Int -> Html msg
 savedGraphOption keys selInd index =
@@ -413,9 +464,9 @@ filterView model item idStr event =
     in
     Html.div [style "background-color" color]
         [ Html.input [type_ "checkbox", onClick <| ToggleCheck item.id, checked item.enabled] []
-        , select [on "change" (D.map (SetAction item.id) targetValueIntParse)] --drop down list with actions
+        , select [Html.Events.on "change" (D.map (SetAction item.id) targetValueIntParse)] --drop down list with actions
             (List.map (actionOption model.initData.actions item.actionIndex) <| List.range 0 <| (+) (-1) <| List.length model.initData.actions)
-        , select [on "change" (D.map (SetFilter item.id) targetValueIntParse)] --drop down list with filters from model, at currently selected index 
+        , select [Html.Events.on "change" (D.map (SetFilter item.id) targetValueIntParse)] --drop down list with filters from model, at currently selected index 
             (List.map (filterOption model.initData.filters item.selectIndex) <| List.range 0 <| (+) (-1) <| List.length model.initData.filters)
         , input [hidden <| not showParam, placeholder "Filter parameter", value item.param, onInput (UpdateFilterParam item.id)] []--input text box for parameters IF the current filter has one (with event handler for changing)
         , button (Html.Attributes.id idStr :: style "cursor" "pointer" :: event) [text "\u{2630}"]  --, "handle", use a hamburger iron 
@@ -569,6 +620,10 @@ type Msg
     | LoadSavedGraph
     | DeleteSavedGraph
     | RunShare
+    | NodeClicked (String, Int, Int)
+    | CBCopy String
+    | CBRes Bool
+    | HideCBRes
 
 -- Now outdated function to  get Svg to embed
 {-- 
@@ -741,6 +796,17 @@ update msg model =
             case model.share of
                 "" -> (model,Cmd.none)
                 _ -> (model,getDotString model)
+        NodeClicked (nodeStr,x,y) ->
+            if nodeStr |> String.startsWith "node" then
+              case String.dropLeft 4 nodeStr |> String.toInt of
+                  Nothing -> ({model | nodeContext = ContextMenu 0 0 0 False}, Cmd.none)
+                  Just node -> ({model | nodeContext = ContextMenu node x y True}, Cmd.none)
+            else
+              ({model | nodeContext = ContextMenu 0 0 0 False}, Cmd.none)
+        CBCopy str -> (model, clipboardCopy str)
+
+        CBRes res -> ({model | cbRes = res}, Cmd.none)
+        HideCBRes -> ({model | cbRes = False}, Cmd.none)
 
 
 subscriptions : Model -> Sub Msg
@@ -750,6 +816,7 @@ subscriptions model =
         , system.subscriptions model.dnd
         , Alert.subscriptions model.errorVis AlertMsg
         , PortFunnels.subscriptions Process model
+        , clipboardRes CBRes
         ]
     
 
