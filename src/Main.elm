@@ -1,10 +1,11 @@
 port module Main exposing (..)
 
 import Browser
+import Browser.Events
 import Html exposing (..)
 import Html.Events exposing (..)
 
-import Html.Attributes exposing (rows, cols, style, type_, checked, placeholder, value, hidden)
+import Html.Attributes exposing (rows, cols, style, type_, checked, placeholder, value, hidden, href)
 import Html.Events.Extra exposing (targetValueIntParse)
 import Http
 import Json.Decode as D
@@ -43,6 +44,16 @@ import Base64 as B64
 import Svg.Events exposing (on)
 import Tuple3
 
+import Bootstrap.Navbar as Navbar
+import Bootstrap.Button as Button
+import Task as Task
+import Bootstrap.Form.Input as Input
+import Bootstrap.Utilities.Spacing as Spacing
+import Bootstrap.Popover as Popover
+import Bootstrap.Accordion as Accordion
+import Bootstrap.Card.Block as Block
+import Bootstrap.ListGroup as ListGroup
+
 
 type alias Size num =
     { width : num
@@ -56,7 +67,9 @@ type alias ContextMenu =
       show : Bool
     }
 type alias Model = 
-    { program : String
+    { height : Int
+    , width : Int 
+    , program : String
     , filter : String
     , dotString : String
     , svgString : String
@@ -75,6 +88,7 @@ type alias Model =
     , exampleIndex : Int
     , error : String
     , errorVis : Alert.Visibility
+    , errorType : Bool
     , useSimulator : Bool
     , wasLoaded : Bool
     , funnelState : PortFunnels.State
@@ -87,6 +101,9 @@ type alias Model =
     , dirty : Bool
     , nodeContext : ContextMenu
     , cbRes : Bool
+    , navbarState : Navbar.State
+    , cbPopover : Popover.State
+    , accState : Accordion.State
     }
 
 queryParser : String -> String
@@ -100,18 +117,25 @@ prefix : String
 prefix =
     "xtraui"
 
-type alias Flags = { url : String }
+type alias Flags = { url : String, height : Int, width : Int}
+
+run : msg -> Cmd msg
+run m = Task.perform (always m) (Task.succeed ())
 
 -- Initial state
 -- Todo: Smarter initial values for size and center?
 init : Flags -> (Model, Cmd Msg)
 init flags =
-    let model = initModel flags.url in
+    let 
+      (navbarState, navbarCmd) = Navbar.initialState NavbarMsg
+      model = initModel flags.url flags.height flags.width navbarState
+      initCmd = Cmd.batch [navbarCmd, run GetInit]
+    in
     case model.share of
-        "" -> update GetInit model
+        "" -> (model, initCmd)
         a -> case B64.decode a of
             Err b -> let modelErrShare = {model | share = "Error: " ++ b} in
-                update GetInit <| modelErrShare
+                (modelErrShare, initCmd)
             Ok c -> 
                 let modelGoodShare = {model | share = c}
                     sharedGraph = D.decodeString jsonToSavedGraph modelGoodShare.share
@@ -120,13 +144,17 @@ init flags =
                     Ok g -> 
                         let modelWithShareLoaded = loadSavedGraphToModel modelGoodShare g
                         in
-                        update GetInit <| modelWithShareLoaded
-                    _ -> update GetInit <| modelGoodShare
+                        (modelWithShareLoaded, initCmd)
+                    _ -> (modelGoodShare, initCmd)
 
+navBarHeight : Int
+navBarHeight = 56
 
-initModel : String -> Model
-initModel location = 
-    { program = ""
+initModel : String -> Int -> Int -> Navbar.State -> Model
+initModel location h w nb =
+    { height = h - navBarHeight
+    , width = w
+    , program = ""
     , filter = ""
     , dotString = ""
     , svgString = ""
@@ -145,6 +173,7 @@ initModel location =
     , exampleIndex = 0
     , error = ""
     , errorVis = Alert.closed
+    , errorType = False
     , useSimulator = False
     , wasLoaded = False
     , funnelState = PortFunnels.initialState prefix
@@ -157,6 +186,9 @@ initModel location =
     , dirty = False
     , nodeContext = ContextMenu 0 0 0 False
     , cbRes = False
+    , navbarState = nb
+    , cbPopover = Popover.initialState
+    , accState = Accordion.initialState
     }
 
 port clipboardCopy : String -> Cmd msg
@@ -175,7 +207,7 @@ storageHandler response state mdl =
     case response of
         LocalStorage.GetResponse { label, key, value } ->
             case value of
-                Nothing -> update (AlertMsg Alert.shown) {model | error = "Empty result"}
+                Nothing -> update (AlertMsg Alert.shown) {model | error = "Empty result", errorType = False}
                 Just v -> update Run (loadSavedGraphToModel model (decodeSavedGraphs v))
         LocalStorage.ListKeysResponse { label, keys } ->
             update RunShare {model | savedGraphKeys = keys}
@@ -197,7 +229,7 @@ send message model =
         model.funnelState.storage
 
 defaultInitData : UT.InitType
-defaultInitData = {actions=[], funcFormat=(UT.NoFormat "="), filters=[], shortenTokens=[], examples=[]}
+defaultInitData = {actions=[], funcFormat=(UT.NoFormat "="), filters=[], shortenTokens=[], examples=Dict.empty}
 
 --From Draggable pan/zoom example
 dragConfig : Draggable.Config () Msg
@@ -219,7 +251,7 @@ xtraBackendURL = "http://localhost:8081/trace"
 xtraBackendURLInit : String
 xtraBackendURLInit = "http://localhost:8081/init"
 
-view : Model -> Html Msg
+view : Model -> Browser.Document Msg
 view model =
     let
         ( cx, cy ) =
@@ -239,13 +271,13 @@ view model =
 
         zooming =
             "scale(" ++ String.fromFloat model.zoom ++ ")"
-        makeSvg modelIn = if modelIn.svgString == "" then div [style "width" "1500px", style "height" "1000px", style "display" "flex", style "align-items" "center", style "justify-content" "center"] [text "Input a program to begin"] else
+        makeSvg modelIn = if modelIn.svgString == "" then div [(String.fromInt modelIn.width) ++ "px" |> style "width", (String.fromInt modelIn.height) ++ "px" |> style "height", style "display" "flex", style "align-items" "center", style "justify-content" "center"] [text "Input a program to begin"] else
             case SU.svgNodeToSvgMod ((SU.addRefdNodes model.refNodes) >> SU.modTitle model.allNodeLabels) (SU.cleanFront (modelIn.svgString)) of
-               Err msg -> div [style "width" "1500px", style "height" "1000px", style "display" "flex", style "align-items" "center", style "justify-content" "center"] [text msg]
+               Err msg -> div [(String.fromInt modelIn.width) ++ "px" |> style "width", (String.fromInt modelIn.height) ++ "px" |> style "height", style "display" "flex", style "align-items" "center", style "justify-content" "center"] [text msg]
                Ok (_, svgs) -> -- _ is attrs
                     Svg.svg
-                        [ num Attr.width modelIn.size.width
-                        , num Attr.height modelIn.size.height
+                        [ num Attr.width <| toFloat modelIn.width
+                        , num Attr.height <| toFloat modelIn.height
                         , handleZoom Zoom
                         , Draggable.mouseTrigger () DragMsg
                         , clickHandler NodeClicked
@@ -262,61 +294,94 @@ view model =
             Just a -> Url.toString a |> String.split "?" |> List.head |> Maybe.withDefault ""
         shareUrl = baseUrl ++ "?" ++ shareB64
     in
-    table [] 
-        [tr [] 
-            [th [] []
-            ,th [] []
-            ]
-        , tr []
-            [td [ style "vertical-align" "top" ] 
-                [hr [] []
-                ,textarea [rows 10, cols 60, onInput SaveProg, value model.program] []
-                ,hr [] []
-                ,button [onClick AddFilter] [b [] <| [text "(+) Add New Filter"]]
-                ,div [style "text-align" "center"] 
-                [
-                    model.items |> List.indexedMap (itemView model) |> Html.div [], ghostView model model.items]
-                ,hr [] []
-                ,div [style "margin" "0 auto", style "display" "flex", style "justify-content" "center"]
-                    [select [Html.Events.on "change" (D.map SetExample targetValueIntParse), style "width" "200px", style "height" "50px", style "margin" "10px", style "font-size" "x-large"]
-                        (List.map (exampleOption model.initData.examples model.exampleIndex) <| List.range 0 <| (+) (-1) <| List.length model.initData.examples)
-                    ,button [onClick LoadEx, style "margin" "10px", style "font-size" "medium"] [b [] <| [text "Load Example"]]
-                    ,button [onClick Clear, style "margin" "10px", style "font-size" "medium"] [b [] <| [text "Clear All"]]
-                    ]
-                
-                ,div [style "margin" "0 auto", style "display" "flex", style "justify-content" "center"] [
-                    input [onInput UpdateName, value model.saveName, style "width" "200px"] []
-                    ,button [onClick SaveGraph, style "margin" "10px", style "font-size" "medium"] [b [] <| [text "Save Program"]]
-                ]
-                ,hr [] []
-                ,div [style "margin" "0 auto", style "display" "flex", style "justify-content" "center"]
-                    [select [Html.Events.on "change" (D.map SetTargetSaved targetValueIntParse), style "width" "200px", style "height" "50px", style "margin" "10px", style "font-size" "x-large"]
-                        (List.map (savedGraphOption model.savedGraphKeys model.selectedSaveGraph) <| List.range 0 <| (+) (-1) <| List.length model.savedGraphKeys)
-                    ,button [onClick LoadSavedGraph, style "margin" "10px", style "font-size" "medium"] [b [] <| [text "Load"]]
-                    ,button [onClick DeleteSavedGraph, style "margin" "10px", style "font-size" "medium"] [b [] <| [text "Delete"]]
-                    ]
-                ,div [style "width" "550px"] [
-                    Alert.config
-                        |> Alert.info
-                        |> Alert.dismissableWithAnimation AlertMsg
-                        |> Alert.children
-                            [ Alert.h4 [] [ text "Error" ]
-                            , text <| model.error
-                            ]
-                        |> Alert.view model.errorVis
-                    ]
-                ,hr [] []
-                ,div [] 
-                  [ input [cols 60, value shareUrl] []
-                  , button [onClick <| CBCopy shareUrl] [text "Copy to Clipboard"]
-                  , if (model.cbRes) then div [] [text "Link Copied", button [onClick HideCBRes] [text "X"]] else div [] []
-                  ]
-                ,showContext model
-                ]
-            ,td [style "border-style" "double"] [ makeSvg model ]
-            ]
-        ]
+      { title = "Xtra.run"
+      , body = 
+        [ Navbar.config NavbarMsg
+          |> Navbar.withAnimation
+          |> Navbar.collapseSmall 
+          |> Navbar.brand [href "#", style "cursor" "pointer"] [text "Tracr.app"]
+          |> Navbar.info
+          |> Navbar.items
+            [ Navbar.dropdown
+              { id = "loadDD"
+              , toggle = Navbar.dropdownToggle [] [text "Load"]
+              , items = 
+                Navbar.dropdownHeader [text "Saved Programs"]
+                :: List.map (\s -> Navbar.dropdownItem [onClick <| LoadSavedGraph s] [text s]) model.savedGraphKeys
+                ++ Navbar.dropdownHeader [text "Example Programs"]
+                :: (Dict.keys model.initData.examples |> List.map (\s -> Navbar.dropdownItem [onClick <| LoadEx s] [text s]))
+              }
+            , Navbar.dropdown
+              { id = "DeleteDD"
+              , toggle = Navbar.dropdownToggle [] [text "Delete"]
+              , items = 
+                Navbar.dropdownHeader [text "Saved Programs"]
+                :: List.map (\s -> Navbar.dropdownItem [onClick <| DeleteSavedGraph s] [text s]) model.savedGraphKeys
+              }
+            , Navbar.itemLink
+              [onClick <| CBCopy shareUrl, style "cursor" "pointer"]
+              [text "Share"]
+          --  , Navbar.itemLink
+          --    [onClick <| ShowModal About, style "cursor" "pointer"]
+          --    [text "About"]
 
+            ]
+          |> Navbar.customItems
+            [ Navbar.formItem []
+              [ Input.text [Input.attrs [placeholder "Enter a Name to Save", onInput UpdateName, value model.saveName]]
+              , Button.button
+                [ Button.success
+                , Button.onClick SaveGraph
+                , Button.attrs [Spacing.ml2Sm]
+                ]
+                [text "Save Program"]
+              ]
+            ]
+          |> Navbar.view model.navbarState
+        , div [ style "vertical-align" "top", style "position" "absolute", style "left" "0%", style "top" "56px", style "width" "450px", style "z-index" "3" ] 
+          [ Accordion.config AccMsg
+            |> Accordion.withAnimation
+            |> Accordion.cards
+              [ Accordion.card
+                { id = "progCard"
+                , options = []
+                , header = Accordion.header [] <| Accordion.toggle [] [text "Program"]
+                , blocks =
+                  [ Accordion.block []
+                    [ Block.custom (textarea [onInput SaveProg, value model.program, rows 4, cols 40] [])]
+                  ]
+                }
+              , Accordion.card
+                { id = "filtCard"
+                , options = []
+                , header = Accordion.header [] <| Accordion.toggle [] [text "Filters"]
+                , blocks =
+                  [ Accordion.block []
+                    [ Block.text [onClick AddFilter, style "cursor" "pointer"] [text "(+) Add New Filter"]]
+                  , Accordion.block []
+                    [Block.custom (div [] [model.items |> List.indexedMap (itemView model) |> Html.div [], ghostView model model.items])]
+                  ]
+                }
+
+              ]
+            |> Accordion.view model.accState
+          ]
+        , div [ style "vertical-align" "bottom", style "position" "absolute", style "right" "0%", style "bottom" "0%", style "width" "400px", style "z-index" "3" ] 
+          [ div [style "width" "400px"]
+            [ Alert.config
+              |> (if model.errorType then Alert.info else Alert.danger)
+              |> Alert.dismissableWithAnimation AlertMsg
+              |> Alert.children
+                  [ Alert.h4 [] [ text ( if model.errorType then "Success" else "Error") ]
+                  , text <| model.error
+                  ]
+              |> Alert.view model.errorVis
+            ]
+          ]
+        , div [style "border-style" "none"] [ makeSvg model ]
+        , showContext model
+        ]
+      }
 
 clickHandler : ((String, Int, Int) -> msg) -> Svg.Attribute msg
 clickHandler msg = 
@@ -367,6 +432,8 @@ exampleOption examples selInd index =
         Just (exampName, _) -> option [value <| String.fromInt index, sel] [text exampName]
         _ -> option [value "-1"] [text "Invalid example index"]
 
+--exampleItems : List String -> List (DropdownItem msg)
+exampleItems ex = List.map (\s -> Navbar.dropdownItem [onClick <| LoadEx s] [text s]) ex
 
 filtsToString : Model -> String
 filtsToString model = 
@@ -587,11 +654,17 @@ handleZoom onZoom =
     <|
         D.map alwaysPreventDefaultAndStopPropagation zoomDecoder
 
+type ModalType
+  = Save
+  | Load
+  | Share
+  | About
+
 --Msg data type, for events
 type Msg 
     = Run
     | Clear
-    | LoadEx 
+    | LoadEx String
     | SaveProg String
     | SaveFilt String
     | GetInit
@@ -610,20 +683,22 @@ type Msg
     | SetAction Int Int
     | AddFilter
     | RemoveFilter Int
-    | SetExample Int
     | AlertMsg Alert.Visibility
     | SaveGraph
     | Process JE.Value
     | ListGraphKeys
     | UpdateName String
-    | SetTargetSaved Int
-    | LoadSavedGraph
-    | DeleteSavedGraph
+    | LoadSavedGraph String
+    | DeleteSavedGraph String
     | RunShare
     | NodeClicked (String, Int, Int)
     | CBCopy String
     | CBRes Bool
-    | HideCBRes
+    | ResizeView Int Int
+    | NavbarMsg Navbar.State
+    | ShowModal ModalType
+    | PopoverMsg Popover.State
+    | AccMsg Accordion.State
 
 -- Now outdated function to  get Svg to embed
 {-- 
@@ -646,16 +721,14 @@ update msg model =
     case msg of
         Clear ->
             ({model | items = [], program = "", svgString = ""}, Cmd.none)
-        LoadEx ->
-            let example = List.Extra.getAt model.exampleIndex model.initData.examples
-            in
-            case example of
-               Just (_, exampleText) -> update (SaveProg exampleText) model
-               _ -> update (SaveProg "") model
+        LoadEx name ->
+          case Dict.get name model.initData.examples of
+            Just n -> ({model | error = "Example Loaded", errorType = True}, Cmd.batch[run <| SaveProg n, run <| AlertMsg Alert.shown] )
+            Nothing -> ({model | error = "Example Not Loaded", errorType = False}, Cmd.batch[run <| AlertMsg Alert.shown] )
         SaveProg prog ->
-            update Run {model | program = prog}
+            ({model | program = prog}, run Run)
         SaveFilt filt ->
-            update Run {model | filter = filt}
+            ({model | filter = filt}, run Run)
         Run ->
             ( model, getDotString model )
         GetInit ->
@@ -674,7 +747,7 @@ update msg model =
                     shortenedDot = DU.shortenLabels dot newNodeLabels maxLabelLength matchTokens
                     newModel = {model | dotString = dot, shortDotString = shortenedDot, refNodes = newRefNodes, allNodeLabels = newNodeLabels}
                 in ( newModel, getSvg newModel )
-            err -> update (AlertMsg Alert.shown) {model | error = err}
+            err -> update (AlertMsg Alert.shown) {model | error = err, errorType = False}
 
 
         GotDot (Err httpError) ->
@@ -685,7 +758,7 @@ update msg model =
             update (AlertMsg Alert.closed) {model | svgString = SU.stringFindAndReplace svg SU.svgReplace} 
             -- SLOW (but complete): ( {model | svgString = unescape svg}, Cmd.none)
         GotSvg (Err httpError) ->
-            update (AlertMsg Alert.shown) { model | error = buildErrorMessage httpError}
+            update (AlertMsg Alert.shown) { model | error = buildErrorMessage httpError, errorType = False}
         ManualDot dot ->
             ( {model | dotString = dot}, getSvg {model | dotString = dot} )
         ManualSvg svg ->
@@ -749,25 +822,23 @@ update msg model =
                    Nothing -> model.items
             in
             update Run { model | items = newFilters }
-        SetExample index ->
-            ({model | exampleIndex = index}, Cmd.none)
         AlertMsg vis ->
             if model.dirty then
                 update ListGraphKeys { model | errorVis = vis, dirty = False }
             else
                 ({ model | errorVis = vis }, Cmd.none)
-        LoadSavedGraph ->
-            let targetKey = List.Extra.getAt model.selectedSaveGraph model.savedGraphKeys
-            in
-            case targetKey of
-                Just targ -> {model | saveName = targ} |> withCmd (send (LocalStorage.get targ) {model | saveName = targ})
-                _ -> update (AlertMsg Alert.shown) { model | error = "Selected Saved Program has an invalid index" }
+        LoadSavedGraph name ->
+          let
+            upModel = {model | saveName = name, error = "Program Loaded", errorType = True}
+            cmds = Cmd.batch [(send (LocalStorage.get name) upModel), run (AlertMsg Alert.shown)]
+          in
+          (upModel, cmds)
         SaveGraph ->
             if List.member model.saveName model.savedGraphKeys then
-                update (AlertMsg Alert.shown) { model | error = "Please enter a unique name to save your program" }
+                update (AlertMsg Alert.shown) { model | error = "Please enter a unique name to save your program", errorType = False}
             else
                 case model.saveName of
-                    "" -> update (AlertMsg Alert.shown) { model | error = "Please enter a name to save your program" }
+                    "" -> update (AlertMsg Alert.shown) { model | error = "Please enter a name to save your program", errorType = False}
                     name ->
                         let newModel = {model | dirty=True, savedGraphKeys=(name :: model.savedGraphKeys), selectedSaveGraph=0, saveName=""}
                         in
@@ -775,23 +846,20 @@ update msg model =
         Process value ->
             case PortFunnels.processValue funnelDict value model.funnelState model
             of
-                Err error -> update (AlertMsg Alert.shown) { model | error = error }
+                Err error -> update (AlertMsg Alert.shown) { model | error = error, errorType = False}
                 Ok res -> res
         ListGraphKeys ->
             {model | savedGraphKeys = []} |> withCmd (send (LocalStorage.listKeys "") model)
         UpdateName value ->
             {model | saveName = value} |> withNoCmd
-        SetTargetSaved index ->
-            ({model | selectedSaveGraph = index}, Cmd.none)
-        DeleteSavedGraph ->
+        DeleteSavedGraph name ->
+          let 
+            updatedKeys = List.Extra.remove name model.savedGraphKeys
+            upModel = {model | error = "Program Saved", savedGraphKeys=updatedKeys, errorType = True}
+            cmds = Cmd.batch [send (LocalStorage.put name Nothing) upModel, run <| AlertMsg Alert.shown]
+          in
+          (upModel, cmds)
 
-            case List.Extra.getAt model.selectedSaveGraph model.savedGraphKeys of
-                Just targ -> 
-                    let updatedKeys = List.Extra.remove targ model.savedGraphKeys
-                        upModel = {model | selectedSaveGraph = max 0 (model.selectedSaveGraph - 1), savedGraphKeys=updatedKeys} 
-                    in
-                    upModel |> withCmd (send (LocalStorage.put targ Nothing) upModel)
-                _ -> update (AlertMsg Alert.shown) { model | error = "Selected Saved Program has an invalid index" }
         RunShare ->
             case model.share of
                 "" -> (model,Cmd.none)
@@ -804,9 +872,17 @@ update msg model =
             else
               ({model | nodeContext = ContextMenu 0 0 0 False}, Cmd.none)
         CBCopy str -> (model, clipboardCopy str)
-
-        CBRes res -> ({model | cbRes = res}, Cmd.none)
-        HideCBRes -> ({model | cbRes = False}, Cmd.none)
+        CBRes _ -> ({model | error = "Link copied to Clipboard", errorType = False}, run <| AlertMsg Alert.shown)
+        ResizeView w h -> ( { model | width = w, height = h - navBarHeight }, Cmd.none )
+        NavbarMsg state -> ({model | navbarState = state}, Cmd.none)
+        ShowModal x ->
+          case x of
+            Save -> (model, Cmd.none)
+            Load -> (model, Cmd.none)
+            Share -> (model, Cmd.none)
+            About -> (model, Cmd.none)
+        PopoverMsg state -> ({model | cbPopover = state}, Cmd.none)
+        AccMsg state -> ( { model | accState = state } , Cmd.none )
 
 
 subscriptions : Model -> Sub Msg
@@ -817,6 +893,9 @@ subscriptions model =
         , Alert.subscriptions model.errorVis AlertMsg
         , PortFunnels.subscriptions Process model
         , clipboardRes CBRes
+        , Browser.Events.onResize (\width height -> ResizeView width height)
+        , Navbar.subscriptions model.navbarState NavbarMsg
+        , Accordion.subscriptions model.accState AccMsg
         ]
     
 
@@ -934,9 +1013,9 @@ getNodeExact i =
         (getNodeExact iDiv) ++ (getNodeExact (iRem))
 -}
 
-main : Program {url : String} Model Msg
+main : Program Flags Model Msg
 main =
-    Browser.element
+    Browser.document
         { init = init
         , view = view
         , update = update

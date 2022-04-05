@@ -1,11 +1,13 @@
 module UITypes exposing(..)
 
+import Dict exposing (Dict)
+
 type alias InitType = 
     { actions : List String
     , funcFormat : FunctionFormat
     , filters : List (String,Bool)
     , shortenTokens : List String
-    , examples : List (String,String)
+    , examples : Dict String String
     }
 
 type FilterInput

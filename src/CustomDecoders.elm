@@ -1,7 +1,8 @@
 module CustomDecoders exposing (..)
 
-import Json.Decode exposing (Decoder, field, list, string, map3, map5, index, succeed, bool)
+import Json.Decode exposing (Decoder, field, list, string, map3, map5, index, succeed, bool, map)
 import Json.Decode.Extra as DE
+import Dict exposing (Dict)
 import UITypes exposing (InitType,FunctionFormat(..))
 
 actionsDecoder : Decoder (List String)
@@ -18,8 +19,8 @@ filterDecoder =
         |> DE.andMap (field "name" string)
         |> DE.andMap (field "param" bool)
 
-examplesDecoder : Decoder (List (String,String))
-examplesDecoder = field "examples" (list exampleDecoder)
+examplesDecoder : Decoder (Dict String String)
+examplesDecoder = field "examples" (list exampleDecoder |> map Dict.fromList)
 exampleDecoder : Decoder (String,String)
 exampleDecoder = 
     succeed Tuple.pair
