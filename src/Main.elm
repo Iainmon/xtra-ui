@@ -53,6 +53,10 @@ import Bootstrap.Popover as Popover
 import Bootstrap.Accordion as Accordion
 import Bootstrap.Card.Block as Block
 import Bootstrap.ListGroup as ListGroup
+import Bootstrap.Grid as Grid
+import Bootstrap.Grid.Col as Col
+import Bootstrap.Dropdown as Dropdown
+import List exposing (length)
 
 
 type alias Size num =
@@ -104,6 +108,7 @@ type alias Model =
     , navbarState : Navbar.State
     , cbPopover : Popover.State
     , accState : Accordion.State
+    , ddState : Dropdown.State
     }
 
 queryParser : String -> String
@@ -122,6 +127,14 @@ type alias Flags = { url : String, height : Int, width : Int}
 run : msg -> Cmd msg
 run m = Task.perform (always m) (Task.succeed ())
 
+{-
+seqCmds : List msg -> Cmd msg
+seqCmds msgs =
+  let
+    cmds = List.map run msgs
+  in
+    Task.perform (always )
+-}
 -- Initial state
 -- Todo: Smarter initial values for size and center?
 init : Flags -> (Model, Cmd Msg)
@@ -189,6 +202,7 @@ initModel location h w nb =
     , navbarState = nb
     , cbPopover = Popover.initialState
     , accState = Accordion.initialState
+    , ddState = Dropdown.initialState
     }
 
 port clipboardCopy : String -> Cmd msg
@@ -281,6 +295,7 @@ view model =
                         , handleZoom Zoom
                         , Draggable.mouseTrigger () DragMsg
                         , clickHandler NodeClicked
+                        , style "cursor" "pointer"
                         ]
                         [(Svg.g 
                             [ Attr.transform (zooming ++ " " ++ panning)
@@ -338,9 +353,10 @@ view model =
               ]
             ]
           |> Navbar.view model.navbarState
-        , div [ style "vertical-align" "top", style "position" "absolute", style "left" "0%", style "top" "56px", style "width" "450px", style "z-index" "3" ] 
+        , div [ style "vertical-align" "top", style "position" "absolute", style "right" "0%", style "bottom" "0%", style "width" "550px", style "z-index" "3" ] 
           [ Accordion.config AccMsg
             |> Accordion.withAnimation
+            |> Accordion.onlyOneOpen
             |> Accordion.cards
               [ Accordion.card
                 { id = "progCard"
@@ -357,16 +373,17 @@ view model =
                 , header = Accordion.header [] <| Accordion.toggle [] [text "Filters"]
                 , blocks =
                   [ Accordion.block []
-                    [ Block.text [onClick AddFilter, style "cursor" "pointer"] [text "(+) Add New Filter"]]
-                  , Accordion.block []
-                    [Block.custom (div [] [model.items |> List.indexedMap (itemView model) |> Html.div [], ghostView model model.items])]
+                      [Block.text [] [Button.button [Button.success, Button.block, Button.large, Button.attrs [onClick AddFilter, style "cursor" "pointer"]] [text "Add New Filter (+)"]]]
+                  , Accordion.listGroup ({-filterCardBlockGhost model model.items ::-} (List.indexedMap (filterCardBlock model) model.items))
                   ]
+--                  , Accordion.block []
+--                    [Block.custom (div [] [model.items |> List.indexedMap (itemView model) |> Html.div [], ghostView model model.items])]
+--                  ]
                 }
-
               ]
             |> Accordion.view model.accState
           ]
-        , div [ style "vertical-align" "bottom", style "position" "absolute", style "right" "0%", style "bottom" "0%", style "width" "400px", style "z-index" "3" ] 
+        , div [ style "vertical-align" "bottom", style "position" "absolute", style "right" "0%", style "top" "56px", style "width" "400px", style "z-index" "3" ] 
           [ div [style "width" "400px"]
             [ Alert.config
               |> (if model.errorType then Alert.info else Alert.danger)
@@ -391,21 +408,32 @@ clickHandler msg =
   in
   Svg.Events.on "click" (D.map msg <| D.map3 Tuple3.join targetId mouseX mouseY)
 
-showContext : Model -> Html msg
-showContext mdl = 
+showContext : Model -> Html Msg
+showContext mdl =
+  let ddState = (.ddState mdl)
+  in
   if mdl.nodeContext.show then 
     div 
       [ style "position" "absolute"
       , style "left" (String.fromInt mdl.nodeContext.mouseX |> flip (++) "px")
       , style "top" (String.fromInt mdl.nodeContext.mouseY |> flip (++) "px")
-      , style "border" "3px solid black"
-      , style "background-color" "rgb(200,200,200)"
-      , style "display" "table-row"
+      , style "border" "1px solid black"
+      --, style "background-color" "rgb(200,200,200)"
+      --, style "display" "table-row"
       ]
-      [ div [] ["Node Selected: " ++ (String.fromInt mdl.nodeContext.nodeClicked) |> text]
+      [ListGroup.custom
+        [ ListGroup.button [ListGroup.active] [text "Global"]
+        , ListGroup.button [ListGroup.attrs [onClick <| NodeClicked ("",0,0)]] [text "Placeholder 1"]
+        , ListGroup.button [ListGroup.attrs [onClick <| NodeClicked ("",0,0)]] [text "Placeholder 2"]
+        , ListGroup.button [ListGroup.active] [text "Local"]
+        , ListGroup.button [ListGroup.attrs [onClick <| NodeClicked ("",0,0)]] [text "Placeholder 3"]
+        , ListGroup.button [ListGroup.attrs [onClick <| NodeClicked ("",0,0)]] [text "Placeholder 4"]
+        ]
+      ]
+{-      [ div [] ["Node Selected: " ++ (String.fromInt mdl.nodeContext.nodeClicked) |> text]
       , div [] ["MouseX: " ++ (String.fromInt mdl.nodeContext.mouseX) |> text]
       , div [] ["MouseY: " ++ (String.fromInt mdl.nodeContext.mouseY) |> text]
-      ]
+      ]-}
   else
     div [] []
 
@@ -463,6 +491,36 @@ filtToString model item =
         ""
 
 
+filterCardBlock : Model -> Int -> Filter -> ListGroup.Item Msg
+filterCardBlock model index item =
+  let
+    itemId = "id-filt" ++ String.fromInt item.id
+    dnd = model.dnd
+    dropEvent = system.dropEvents index itemId
+    dragEvent = system.dragEvents index itemId
+    liColor = if item.enabled then ListGroup.success else ListGroup.danger
+  in
+  case system.info dnd of
+    Just {dragIndex} ->
+      if dragIndex /= index then
+        ListGroup.li [liColor]
+          [ Html.div
+              (Html.Attributes.id itemId :: dropEvent)--:: system.dropEvents index itemId)
+              [filterView model item "" []]--[Html.text <| filtToString model item ]
+          ]
+      else
+        ListGroup.li [liColor]
+          [ Html.div
+              [Html.Attributes.id itemId]
+              [Html.div [style "opacity" "0.8"] [filterView model item "" []]]--text "<--- Move Filter Here --->" ]]
+          ]
+    Nothing ->
+      ListGroup.li [liColor]
+        [ Html.div
+            [Html.Attributes.id itemId] --(Html.Attributes.id itemId :: [])--(Html.Attributes.id itemId :: dragEvent)--:: system.dragEvents index itemId)
+            [filterView model item "" dragEvent]--[Html.text <| filtToString model item ]
+        ]
+      
 itemView : Model -> Int -> Filter -> Html.Html Msg
 itemView model index item =
     let
@@ -474,17 +532,36 @@ itemView model index item =
     case system.info dnd of
         Just {dragIndex} ->
             if dragIndex /= index then
-                Html.p
+                Html.div
                     (Html.Attributes.id itemId :: dropEvent)--:: system.dropEvents index itemId)
                     [filterView model item "" []]--[Html.text <| filtToString model item ]
             else
-                Html.p
+                Html.div
                     [Html.Attributes.id itemId]
                     [Html.div [style "background-color" "grey"] [ text "<--- Move Filter Here --->" ]]
         Nothing ->
-            Html.p
+            Html.div
                 [Html.Attributes.id itemId] --(Html.Attributes.id itemId :: [])--(Html.Attributes.id itemId :: dragEvent)--:: system.dragEvents index itemId)
                 [filterView model item "" dragEvent]--[Html.text <| filtToString model item ]
+
+filterCardBlockGhost : Model -> List Filter -> ListGroup.Item Msg
+filterCardBlockGhost model items =
+  let
+    dnd = model.dnd
+    maybeDragItem : Maybe Filter
+    maybeDragItem = system.info dnd
+      |> Maybe.andThen (\{dragIndex} -> items |> List.drop dragIndex |> List.head)
+  in
+  case maybeDragItem of
+    Just item ->
+      ListGroup.li [if item.enabled then ListGroup.success else ListGroup.danger]
+          [ Html.div
+              (style "opacity" "0.5" :: system.ghostStyles dnd)--:: system.dropEvents index itemId)
+              [filterView model item "" []]--[Html.text <| filtToString model item ]
+          ]
+    Nothing ->
+      ListGroup.li [] []
+
 
 ghostView : Model -> List Filter -> Html.Html Msg
 ghostView model items =
@@ -527,18 +604,55 @@ filterView model item idStr event =
     let
         showParam : Bool
         showParam = Tuple.second <| Maybe.withDefault ("",False) <| List.Extra.getAt item.selectIndex model.initData.filters
-        color = if item.enabled then "green" else "red"
     in
-    Html.div [style "background-color" color]
-        [ Html.input [type_ "checkbox", onClick <| ToggleCheck item.id, checked item.enabled] []
-        , select [Html.Events.on "change" (D.map (SetAction item.id) targetValueIntParse)] --drop down list with actions
-            (List.map (actionOption model.initData.actions item.actionIndex) <| List.range 0 <| (+) (-1) <| List.length model.initData.actions)
-        , select [Html.Events.on "change" (D.map (SetFilter item.id) targetValueIntParse)] --drop down list with filters from model, at currently selected index 
+    Grid.container []
+      ( Grid.row []
+        [ Grid.col [Col.mdAuto, Col.attrs []] 
+          [ Button.button 
+              [ Button.outlineLight
+              , Button.small
+              , Button.attrs ([Html.Attributes.id idStr, Spacing.m1, style "cursor" "pointer"] ++ event)
+              ] 
+              [ text "\u{2630}" ]
+          , Button.button 
+              [ if item.enabled then Button.outlineSuccess else Button.outlineDanger
+              , Button.onClick (ToggleCheck item.id)
+              , Button.small
+              , Button.attrs [Spacing.m1]
+              ]
+              [ if item.enabled then text "On" else text "Off" ]
+          , Button.button 
+              [ if item.actionIndex == 1 then Button.success else Button.danger
+              , Button.onClick (SetAction item.id (if item.actionIndex == 1 then 0 else 1))
+              , Button.small
+              , Button.attrs [Spacing.m1]
+              ]
+              [div (if item.actionIndex == 1 then [] else [style "text-decoration" "line-through"]) [text "Propagate"]]
+          ]
+        , Grid.col [Col.md5 ]
+          [ select [Html.Events.on "change" (D.map (SetFilter item.id) targetValueIntParse), style "height" "35px"] --drop down list with filters from model, at currently selected index 
             (List.map (filterOption model.initData.filters item.selectIndex) <| List.range 0 <| (+) (-1) <| List.length model.initData.filters)
-        , input [hidden <| not showParam, placeholder "Filter parameter", value item.param, onInput (UpdateFilterParam item.id)] []--input text box for parameters IF the current filter has one (with event handler for changing)
-        , button (Html.Attributes.id idStr :: style "cursor" "pointer" :: event) [text "\u{2630}"]  --, "handle", use a hamburger iron 
-        , button [onClick <| RemoveFilter item.id] [text "\u{274C}"]
+          ]
+        , Grid.col [Col.mdAuto]
+          [ Button.button 
+              [ Button.outlineDanger
+              , Button.small
+              , Button.onClick (RemoveFilter item.id)
+              , Button.attrs []--[Spacing.ml5]
+              ]
+              [text "Delete"]
+          ]
+        ] 
+      ::
+      ( if not showParam then [] else
+        [ Grid.row []
+            [ Grid.col [Col.md5] []
+            , Grid.col [Col.mdAuto]
+              [ input [hidden <| not showParam, placeholder "Filter parameter", value item.param, onInput (UpdateFilterParam item.id)] []--input text box for parameters IF the current filter has one (with event handler for changing)
+              ]
+            ]
         ]
+      ))
 
 --Need way to add and remove filters (More msgs with update handler cases)
 --  Also node click will be a shortcut to add a specific filter
@@ -614,7 +728,10 @@ getCurrentGraph : Model -> SavedGraph
 getCurrentGraph model = {program = model.program, filters = model.items}
 
 loadSavedGraphToModel : Model -> SavedGraph -> Model
-loadSavedGraphToModel model gr = {model | program= gr.program, items=gr.filters}  
+loadSavedGraphToModel model gr = 
+  let maxFiltId = List.foldl (\x acc -> max x.id acc) 0 gr.filters
+  in
+  {model | program= gr.program, items=gr.filters, filtIdCounter=maxFiltId+1}  
 
 config : DnDList.Config Filter
 config = 
@@ -696,9 +813,11 @@ type Msg
     | CBRes Bool
     | ResizeView Int Int
     | NavbarMsg Navbar.State
-    | ShowModal ModalType
     | PopoverMsg Popover.State
     | AccMsg Accordion.State
+    | CloseFilterAcc
+    | OpenFilterAcc
+    | DDMsg Dropdown.State
 
 -- Now outdated function to  get Svg to embed
 {-- 
@@ -812,16 +931,18 @@ update msg model =
         AddFilter ->
             let
                 newFilters = model.items ++ [{actionIndex=0, enabled=False, selectIndex=0, param="", id=model.filtIdCounter}]
+                cmds = Cmd.batch [run Run, run <| CloseFilterAcc]
             in
-            update Run { model | items = newFilters, filtIdCounter=model.filtIdCounter + 1}
+            ({ model | items = newFilters, filtIdCounter=model.filtIdCounter + 1},  cmds)-- Run { model | items = newFilters, filtIdCounter=model.filtIdCounter + 1}
         RemoveFilter target ->
             let
                 targetIndex = List.Extra.findIndex (\filt -> filt.id == target) model.items
                 newFilters = case targetIndex of
                    Just index -> List.Extra.removeAt index model.items
                    Nothing -> model.items
+                cmds = Cmd.batch [run Run, run <| CloseFilterAcc]
             in
-            update Run { model | items = newFilters }
+            ({ model | items = newFilters }, cmds)
         AlertMsg vis ->
             if model.dirty then
                 update ListGraphKeys { model | errorVis = vis, dirty = False }
@@ -875,14 +996,13 @@ update msg model =
         CBRes _ -> ({model | error = "Link copied to Clipboard", errorType = False}, run <| AlertMsg Alert.shown)
         ResizeView w h -> ( { model | width = w, height = h - navBarHeight }, Cmd.none )
         NavbarMsg state -> ({model | navbarState = state}, Cmd.none)
-        ShowModal x ->
-          case x of
-            Save -> (model, Cmd.none)
-            Load -> (model, Cmd.none)
-            Share -> (model, Cmd.none)
-            About -> (model, Cmd.none)
         PopoverMsg state -> ({model | cbPopover = state}, Cmd.none)
         AccMsg state -> ( { model | accState = state } , Cmd.none )
+        CloseFilterAcc ->
+          ({model | accState = Accordion.initialState}, run OpenFilterAcc)
+        OpenFilterAcc -> 
+          ({model | accState = Accordion.initialStateCardOpen "filtCard"}, Cmd.none)
+        DDMsg state -> ( { model | ddState = state } , Cmd.none )
 
 
 subscriptions : Model -> Sub Msg
@@ -896,6 +1016,7 @@ subscriptions model =
         , Browser.Events.onResize (\width height -> ResizeView width height)
         , Navbar.subscriptions model.navbarState NavbarMsg
         , Accordion.subscriptions model.accState AccMsg
+        , Dropdown.subscriptions model.ddState DDMsg
         ]
     
 
