@@ -56,6 +56,7 @@ import Bootstrap.ListGroup as ListGroup
 import Bootstrap.Grid as Grid
 import Bootstrap.Grid.Col as Col
 import Bootstrap.Dropdown as Dropdown
+import Bootstrap.Spinner as Spinner
 import List exposing (length)
 
 
@@ -92,7 +93,7 @@ type alias Model =
     , exampleIndex : Int
     , error : String
     , errorVis : Alert.Visibility
-    , errorType : Bool
+    , errorType : AlertType
     , useSimulator : Bool
     , wasLoaded : Bool
     , funnelState : PortFunnels.State
@@ -109,7 +110,14 @@ type alias Model =
     , cbPopover : Popover.State
     , accState : Accordion.State
     , ddState : Dropdown.State
+    , spinnerOn : Bool
     }
+
+type AlertType 
+  = ASuccess
+  | AInfo
+  | AWarning
+  | AError
 
 queryParser : String -> String
 queryParser url = case Url.fromString url of
@@ -186,7 +194,7 @@ initModel location h w nb =
     , exampleIndex = 0
     , error = ""
     , errorVis = Alert.closed
-    , errorType = False
+    , errorType = ASuccess
     , useSimulator = False
     , wasLoaded = False
     , funnelState = PortFunnels.initialState prefix
@@ -203,6 +211,7 @@ initModel location h w nb =
     , cbPopover = Popover.initialState
     , accState = Accordion.initialState
     , ddState = Dropdown.initialState
+    , spinnerOn = False
     }
 
 port clipboardCopy : String -> Cmd msg
@@ -221,8 +230,8 @@ storageHandler response state mdl =
     case response of
         LocalStorage.GetResponse { label, key, value } ->
             case value of
-                Nothing -> update (AlertMsg Alert.shown) {model | error = "Empty result", errorType = False}
-                Just v -> (loadSavedGraphToModel model (decodeSavedGraphs v), Cmd.batch [run Run, run CloseFilterAcc ])
+                Nothing -> update (AlertMsg Alert.shown) {model | error = "Empty result", errorType = AError}
+                Just v -> (loadSavedGraphToModel model (decodeSavedGraphs v), Cmd.batch [run Run, run CloseFilterAcc, run (AlertMsg Alert.shown)])
         LocalStorage.ListKeysResponse { label, keys } ->
             update RunShare {model | savedGraphKeys = keys}
             --{model | savedGraphKeys = keys} |> withCmd Run
@@ -314,7 +323,7 @@ view model =
         [ Navbar.config NavbarMsg
           |> Navbar.withAnimation
           |> Navbar.collapseSmall 
-          |> Navbar.brand [href "#", style "cursor" "pointer"] [text "Tracr.app"]
+          |> Navbar.brand [href "/index.html", style "cursor" "pointer"] [text "Tracr.app"]
           |> Navbar.info
           |> Navbar.items
             [ Navbar.dropdown
@@ -386,19 +395,49 @@ view model =
         , div [ style "vertical-align" "bottom", style "position" "absolute", style "right" "0%", style "top" "56px", style "width" "400px", style "z-index" "3" ] 
           [ div [style "width" "400px"]
             [ Alert.config
-              |> (if model.errorType then Alert.info else Alert.danger)
+              |> alertColor model.errorType
               |> Alert.dismissableWithAnimation AlertMsg
               |> Alert.children
-                  [ Alert.h4 [] [ text ( if model.errorType then "Success" else "Error") ]
+                  [ Alert.h4 [] [ text (alertTitle model.errorType) ]
                   , text <| model.error
                   ]
               |> Alert.view model.errorVis
             ]
           ]
-        , div [style "border-style" "none"] [ makeSvg model ]
+        , div [style "border-style" "none", style "opacity" (if model.spinnerOn then "0.6" else "1.0")] [ makeSvg model ]
+        , div 
+          [ style "position" "absolute"
+          , style "left" "0%"
+          , style "bottom" "0%"
+          , (String.fromInt model.width) ++ "px" |> style "width"
+          , (String.fromInt model.height) ++ "px" |> style "height"
+          , style "display" (if model.spinnerOn then "flex" else "none")
+          , style "align-items" "center"
+          , style "justify-content" "center"
+          , style "z-index" "2"
+          , style "background-color" "lightgrey"
+          , style "opacity" "0.5"
+          ]
+          [ Spinner.spinner 
+            [ Spinner.large, Spinner.attrs [style "width" "12rem", style "height" "12rem", style "color" "black", style "border-width" "1rem"] ] []
+          ]
         , showContext model
         ]
       }
+
+alertTitle : AlertType -> String
+alertTitle a = case a of
+  ASuccess -> "Success"
+  AInfo -> "Success"
+  AWarning -> "Warning"
+  AError -> "Error"
+
+alertColor : AlertType -> Alert.Config msg -> Alert.Config msg
+alertColor a = case a of
+  ASuccess -> Alert.success
+  AInfo -> Alert.info
+  AWarning -> Alert.warning
+  AError -> Alert.danger
 
 clickHandler : ((String, Int, Int) -> msg) -> Svg.Attribute msg
 clickHandler msg = 
@@ -842,14 +881,14 @@ update msg model =
             ({model | items = [], program = "", svgString = ""}, Cmd.none)
         LoadEx name ->
           case Dict.get name model.initData.examples of
-            Just n -> ({model | error = "Example Loaded", errorType = True}, Cmd.batch[run <| SaveProg n, run <| AlertMsg Alert.shown] )
-            Nothing -> ({model | error = "Example Not Loaded", errorType = False}, Cmd.batch[run <| AlertMsg Alert.shown] )
+            Just n -> ({model | error = "Example Loaded", errorType = ASuccess}, Cmd.batch[run <| SaveProg n, run <| AlertMsg Alert.shown] )
+            Nothing -> ({model | error = "Example Not Loaded", errorType = AWarning}, Cmd.batch[run <| AlertMsg Alert.shown] )
         SaveProg prog ->
             ({model | program = prog}, run Run)
         SaveFilt filt ->
             ({model | filter = filt}, run Run)
         Run ->
-            ( model, getDotString model )
+            ( {model | spinnerOn = True}, getDotString {model | spinnerOn = True} )
         GetInit ->
             ( model, getInitData model)
         GotInit (Ok data) ->
@@ -866,7 +905,7 @@ update msg model =
                     shortenedDot = DU.shortenLabels dot newNodeLabels maxLabelLength matchTokens
                     newModel = {model | dotString = dot, shortDotString = shortenedDot, refNodes = newRefNodes, allNodeLabels = newNodeLabels}
                 in ( newModel, getSvg newModel )
-            err -> update (AlertMsg Alert.shown) {model | error = err, errorType = False}
+            err -> update (AlertMsg Alert.shown) {model | error = err, errorType = AError}
 
 
         GotDot (Err httpError) ->
@@ -874,10 +913,10 @@ update msg model =
             , Cmd.none
             )
         GotSvg (Ok svg) ->
-            update (AlertMsg Alert.closed) {model | svgString = SU.stringFindAndReplace svg SU.svgReplace} 
+            update (AlertMsg Alert.closed) {model | svgString = SU.stringFindAndReplace svg SU.svgReplace, spinnerOn = False} 
             -- SLOW (but complete): ( {model | svgString = unescape svg}, Cmd.none)
         GotSvg (Err httpError) ->
-            update (AlertMsg Alert.shown) { model | error = buildErrorMessage httpError, errorType = False}
+            update (AlertMsg Alert.shown) { model | error = buildErrorMessage httpError, errorType = AError}
         ManualDot dot ->
             ( {model | dotString = dot}, getSvg {model | dotString = dot} )
         ManualSvg svg ->
@@ -950,25 +989,25 @@ update msg model =
                 ({ model | errorVis = vis }, Cmd.none)
         LoadSavedGraph name ->
           let
-            upModel = {model | saveName = name, error = "Program Loaded", errorType = True}
+            upModel = {model | saveName = name, error = "Program Loaded", errorType = ASuccess}
             cmds = Cmd.batch [(send (LocalStorage.get name) upModel), run (AlertMsg Alert.shown)]
           in
           (upModel, cmds)
         SaveGraph ->
             if List.member model.saveName model.savedGraphKeys then
-                update (AlertMsg Alert.shown) { model | error = "Please enter a unique name to save your program", errorType = False}
+                update (AlertMsg Alert.shown) { model | error = "Please enter a unique name to save your program", errorType = AWarning}
             else
                 case model.saveName of
-                    "" -> update (AlertMsg Alert.shown) { model | error = "Please enter a name to save your program", errorType = False}
+                    "" -> update (AlertMsg Alert.shown) { model | error = "Please enter a name to save your program", errorType = AWarning}
                     name ->
-                        let newModel = {model | dirty=True, savedGraphKeys=(name :: model.savedGraphKeys), selectedSaveGraph=0, saveName="", error = "Saved as " ++ name, errorType = True}
-                            cmds = Cmd.batch [send (LocalStorage.put name (Just <| savedGraphToJSON <| getCurrentGraph model)) newModel, run (AlertMsg Alert.shown)]
+                        let newModel = {model | dirty=True, savedGraphKeys=(name :: model.savedGraphKeys), selectedSaveGraph=0, saveName="", error = "Saved as " ++ name, errorType = ASuccess}
+                            cmds = Cmd.batch [run (AlertMsg Alert.shown), send (LocalStorage.put name (Just <| savedGraphToJSON <| getCurrentGraph model)) newModel]
                         in
                         (newModel, cmds)
         Process value ->
             case PortFunnels.processValue funnelDict value model.funnelState model
             of
-                Err error -> update (AlertMsg Alert.shown) { model | error = error, errorType = False}
+                Err error -> update (AlertMsg Alert.shown) { model | error = error, errorType = AError}
                 Ok res -> res
         ListGraphKeys ->
             {model | savedGraphKeys = []} |> withCmd (send (LocalStorage.listKeys "") model)
@@ -977,7 +1016,7 @@ update msg model =
         DeleteSavedGraph name ->
           let 
             updatedKeys = List.Extra.remove name model.savedGraphKeys
-            upModel = {model | error = "Program Saved", savedGraphKeys=updatedKeys, errorType = True}
+            upModel = {model | error = "Program " ++ name ++ " deleted.", savedGraphKeys=updatedKeys, errorType = AWarning}
             cmds = Cmd.batch [send (LocalStorage.put name Nothing) upModel, run <| AlertMsg Alert.shown]
           in
           (upModel, cmds)
@@ -994,7 +1033,7 @@ update msg model =
             else
               ({model | nodeContext = ContextMenu 0 0 0 False}, Cmd.none)
         CBCopy str -> (model, clipboardCopy str)
-        CBRes _ -> ({model | error = "Link copied to Clipboard", errorType = True}, run <| AlertMsg Alert.shown)
+        CBRes _ -> ({model | error = "Link copied to Clipboard", errorType = AInfo}, run <| AlertMsg Alert.shown)
         ResizeView w h -> ( { model | width = w, height = h - navBarHeight }, Cmd.none )
         NavbarMsg state -> ({model | navbarState = state}, Cmd.none)
         PopoverMsg state -> ({model | cbPopover = state}, Cmd.none)

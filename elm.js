@@ -6905,6 +6905,7 @@ var $truqu$elm_base64$Base64$Decode$validateAndDecode = function (input) {
 var $truqu$elm_base64$Base64$Decode$decode = A2($elm$core$Basics$composeR, $truqu$elm_base64$Base64$Decode$pad, $truqu$elm_base64$Base64$Decode$validateAndDecode);
 var $truqu$elm_base64$Base64$decode = $truqu$elm_base64$Base64$Decode$decode;
 var $elm$json$Json$Decode$decodeString = _Json_runOnString;
+var $author$project$Main$ASuccess = {$: 'ASuccess'};
 var $author$project$Main$ContextMenu = F4(
 	function (nodeClicked, mouseX, mouseY, show) {
 		return {mouseX: mouseX, mouseY: mouseY, nodeClicked: nodeClicked, show: show};
@@ -8223,7 +8224,7 @@ var $author$project$Main$initModel = F4(
 			dotString: '',
 			drag: $zaboco$elm_draggable$Draggable$init,
 			error: '',
-			errorType: false,
+			errorType: $author$project$Main$ASuccess,
 			errorVis: $rundis$elm_bootstrap$Bootstrap$Alert$closed,
 			exampleIndex: 0,
 			filtIdCounter: 0,
@@ -8244,6 +8245,7 @@ var $author$project$Main$initModel = F4(
 			share: $author$project$Main$queryParser(location),
 			shortDotString: '',
 			size: A2($author$project$Main$Size, 1500, 1000),
+			spinnerOn: false,
 			svgString: '',
 			url: $elm$url$Url$fromString(location),
 			useSimulator: false,
@@ -8850,6 +8852,9 @@ var $author$project$Main$subscriptions = function (model) {
 				A2($rundis$elm_bootstrap$Bootstrap$Dropdown$subscriptions, model.ddState, $author$project$Main$DDMsg)
 			]));
 };
+var $author$project$Main$AError = {$: 'AError'};
+var $author$project$Main$AInfo = {$: 'AInfo'};
+var $author$project$Main$AWarning = {$: 'AWarning'};
 var $author$project$Main$CloseFilterAcc = {$: 'CloseFilterAcc'};
 var $author$project$Main$ListGraphKeys = {$: 'ListGraphKeys'};
 var $author$project$PortFunnels$LocalStorageHandler = function (a) {
@@ -16499,7 +16504,7 @@ var $author$project$Main$storageHandler = F3(
 						$author$project$Main$AlertMsg($rundis$elm_bootstrap$Bootstrap$Alert$shown),
 						_Utils_update(
 							model,
-							{error: 'Empty result', errorType: false}));
+							{error: 'Empty result', errorType: $author$project$Main$AError}));
 				} else {
 					var v = value.a;
 					return _Utils_Tuple2(
@@ -16511,7 +16516,9 @@ var $author$project$Main$storageHandler = F3(
 							_List_fromArray(
 								[
 									$author$project$Main$run($author$project$Main$Run),
-									$author$project$Main$run($author$project$Main$CloseFilterAcc)
+									$author$project$Main$run($author$project$Main$CloseFilterAcc),
+									$author$project$Main$run(
+									$author$project$Main$AlertMsg($rundis$elm_bootstrap$Bootstrap$Alert$shown))
 								])));
 				}
 			case 'ListKeysResponse':
@@ -16546,7 +16553,7 @@ var $author$project$Main$update = F2(
 						return _Utils_Tuple2(
 							_Utils_update(
 								model,
-								{error: 'Example Loaded', errorType: true}),
+								{error: 'Example Loaded', errorType: $author$project$Main$ASuccess}),
 							$elm$core$Platform$Cmd$batch(
 								_List_fromArray(
 									[
@@ -16559,7 +16566,7 @@ var $author$project$Main$update = F2(
 						return _Utils_Tuple2(
 							_Utils_update(
 								model,
-								{error: 'Example Not Loaded', errorType: false}),
+								{error: 'Example Not Loaded', errorType: $author$project$Main$AWarning}),
 							$elm$core$Platform$Cmd$batch(
 								_List_fromArray(
 									[
@@ -16583,8 +16590,13 @@ var $author$project$Main$update = F2(
 						$author$project$Main$run($author$project$Main$Run));
 				case 'Run':
 					return _Utils_Tuple2(
-						model,
-						$author$project$Main$getDotString(model));
+						_Utils_update(
+							model,
+							{spinnerOn: true}),
+						$author$project$Main$getDotString(
+							_Utils_update(
+								model,
+								{spinnerOn: true})));
 				case 'GetInit':
 					return _Utils_Tuple2(
 						model,
@@ -16629,7 +16641,7 @@ var $author$project$Main$update = F2(
 							var $temp$msg = $author$project$Main$AlertMsg($rundis$elm_bootstrap$Bootstrap$Alert$shown),
 								$temp$model = _Utils_update(
 								model,
-								{error: err, errorType: false});
+								{error: err, errorType: $author$project$Main$AError});
 							msg = $temp$msg;
 							model = $temp$model;
 							continue update;
@@ -16651,6 +16663,7 @@ var $author$project$Main$update = F2(
 							$temp$model = _Utils_update(
 							model,
 							{
+								spinnerOn: false,
 								svgString: A2($author$project$SvgUtil$stringFindAndReplace, svg, $author$project$SvgUtil$svgReplace)
 							});
 						msg = $temp$msg;
@@ -16663,7 +16676,7 @@ var $author$project$Main$update = F2(
 							model,
 							{
 								error: $author$project$Main$buildErrorMessage(httpError),
-								errorType: false
+								errorType: $author$project$Main$AError
 							});
 						msg = $temp$msg;
 						model = $temp$model;
@@ -16868,7 +16881,7 @@ var $author$project$Main$update = F2(
 					var name = msg.a;
 					var upModel = _Utils_update(
 						model,
-						{error: 'Program Loaded', errorType: true, saveName: name});
+						{error: 'Program Loaded', errorType: $author$project$Main$ASuccess, saveName: name});
 					var cmds = $elm$core$Platform$Cmd$batch(
 						_List_fromArray(
 							[
@@ -16885,7 +16898,7 @@ var $author$project$Main$update = F2(
 						var $temp$msg = $author$project$Main$AlertMsg($rundis$elm_bootstrap$Bootstrap$Alert$shown),
 							$temp$model = _Utils_update(
 							model,
-							{error: 'Please enter a unique name to save your program', errorType: false});
+							{error: 'Please enter a unique name to save your program', errorType: $author$project$Main$AWarning});
 						msg = $temp$msg;
 						model = $temp$model;
 						continue update;
@@ -16895,7 +16908,7 @@ var $author$project$Main$update = F2(
 							var $temp$msg = $author$project$Main$AlertMsg($rundis$elm_bootstrap$Bootstrap$Alert$shown),
 								$temp$model = _Utils_update(
 								model,
-								{error: 'Please enter a name to save your program', errorType: false});
+								{error: 'Please enter a name to save your program', errorType: $author$project$Main$AWarning});
 							msg = $temp$msg;
 							model = $temp$model;
 							continue update;
@@ -16906,7 +16919,7 @@ var $author$project$Main$update = F2(
 								{
 									dirty: true,
 									error: 'Saved as ' + name,
-									errorType: true,
+									errorType: $author$project$Main$ASuccess,
 									saveName: '',
 									savedGraphKeys: A2($elm$core$List$cons, name, model.savedGraphKeys),
 									selectedSaveGraph: 0
@@ -16914,6 +16927,8 @@ var $author$project$Main$update = F2(
 							var cmds = $elm$core$Platform$Cmd$batch(
 								_List_fromArray(
 									[
+										$author$project$Main$run(
+										$author$project$Main$AlertMsg($rundis$elm_bootstrap$Bootstrap$Alert$shown)),
 										A2(
 										$author$project$Main$send,
 										A2(
@@ -16922,9 +16937,7 @@ var $author$project$Main$update = F2(
 											$elm$core$Maybe$Just(
 												$author$project$Main$savedGraphToJSON(
 													$author$project$Main$getCurrentGraph(model)))),
-										newModel),
-										$author$project$Main$run(
-										$author$project$Main$AlertMsg($rundis$elm_bootstrap$Bootstrap$Alert$shown))
+										newModel)
 									]));
 							return _Utils_Tuple2(newModel, cmds);
 						}
@@ -16942,7 +16955,7 @@ var $author$project$Main$update = F2(
 						var $temp$msg = $author$project$Main$AlertMsg($rundis$elm_bootstrap$Bootstrap$Alert$shown),
 							$temp$model = _Utils_update(
 							model,
-							{error: error, errorType: false});
+							{error: error, errorType: $author$project$Main$AError});
 						msg = $temp$msg;
 						model = $temp$model;
 						continue update;
@@ -16971,7 +16984,7 @@ var $author$project$Main$update = F2(
 					var updatedKeys = A2($elm_community$list_extra$List$Extra$remove, name, model.savedGraphKeys);
 					var upModel = _Utils_update(
 						model,
-						{error: 'Program Saved', errorType: true, savedGraphKeys: updatedKeys});
+						{error: 'Program ' + (name + ' deleted.'), errorType: $author$project$Main$AWarning, savedGraphKeys: updatedKeys});
 					var cmds = $elm$core$Platform$Cmd$batch(
 						_List_fromArray(
 							[
@@ -17036,7 +17049,7 @@ var $author$project$Main$update = F2(
 					return _Utils_Tuple2(
 						_Utils_update(
 							model,
-							{error: 'Link copied to Clipboard', errorType: true}),
+							{error: 'Link copied to Clipboard', errorType: $author$project$Main$AInfo}),
 						$author$project$Main$run(
 							$author$project$Main$AlertMsg($rundis$elm_bootstrap$Bootstrap$Alert$shown)));
 				case 'ResizeView':
@@ -17566,6 +17579,57 @@ var $author$project$SvgUtil$addRefdNodes = F2(
 				}
 		}
 	});
+var $rundis$elm_bootstrap$Bootstrap$Internal$Role$Danger = {$: 'Danger'};
+var $rundis$elm_bootstrap$Bootstrap$Alert$Config = function (a) {
+	return {$: 'Config', a: a};
+};
+var $rundis$elm_bootstrap$Bootstrap$Alert$role = F2(
+	function (role_, _v0) {
+		var configRec = _v0.a;
+		return $rundis$elm_bootstrap$Bootstrap$Alert$Config(
+			_Utils_update(
+				configRec,
+				{role: role_}));
+	});
+var $rundis$elm_bootstrap$Bootstrap$Alert$danger = function (conf) {
+	return A2($rundis$elm_bootstrap$Bootstrap$Alert$role, $rundis$elm_bootstrap$Bootstrap$Internal$Role$Danger, conf);
+};
+var $rundis$elm_bootstrap$Bootstrap$Internal$Role$Info = {$: 'Info'};
+var $rundis$elm_bootstrap$Bootstrap$Alert$info = function (conf) {
+	return A2($rundis$elm_bootstrap$Bootstrap$Alert$role, $rundis$elm_bootstrap$Bootstrap$Internal$Role$Info, conf);
+};
+var $rundis$elm_bootstrap$Bootstrap$Internal$Role$Success = {$: 'Success'};
+var $rundis$elm_bootstrap$Bootstrap$Alert$success = function (conf) {
+	return A2($rundis$elm_bootstrap$Bootstrap$Alert$role, $rundis$elm_bootstrap$Bootstrap$Internal$Role$Success, conf);
+};
+var $rundis$elm_bootstrap$Bootstrap$Internal$Role$Warning = {$: 'Warning'};
+var $rundis$elm_bootstrap$Bootstrap$Alert$warning = function (conf) {
+	return A2($rundis$elm_bootstrap$Bootstrap$Alert$role, $rundis$elm_bootstrap$Bootstrap$Internal$Role$Warning, conf);
+};
+var $author$project$Main$alertColor = function (a) {
+	switch (a.$) {
+		case 'ASuccess':
+			return $rundis$elm_bootstrap$Bootstrap$Alert$success;
+		case 'AInfo':
+			return $rundis$elm_bootstrap$Bootstrap$Alert$info;
+		case 'AWarning':
+			return $rundis$elm_bootstrap$Bootstrap$Alert$warning;
+		default:
+			return $rundis$elm_bootstrap$Bootstrap$Alert$danger;
+	}
+};
+var $author$project$Main$alertTitle = function (a) {
+	switch (a.$) {
+		case 'ASuccess':
+			return 'Success';
+		case 'AInfo':
+			return 'Success';
+		case 'AWarning':
+			return 'Warning';
+		default:
+			return 'Error';
+	}
+};
 var $rundis$elm_bootstrap$Bootstrap$Internal$Button$Attrs = function (a) {
 	return {$: 'Attrs', a: a};
 };
@@ -17577,6 +17641,12 @@ var $rundis$elm_bootstrap$Bootstrap$Form$Input$Attrs = function (a) {
 };
 var $rundis$elm_bootstrap$Bootstrap$Form$Input$attrs = function (attrs_) {
 	return $rundis$elm_bootstrap$Bootstrap$Form$Input$Attrs(attrs_);
+};
+var $rundis$elm_bootstrap$Bootstrap$Spinner$Attrs = function (a) {
+	return {$: 'Attrs', a: a};
+};
+var $rundis$elm_bootstrap$Bootstrap$Spinner$attrs = function (attrs_) {
+	return $rundis$elm_bootstrap$Bootstrap$Spinner$Attrs(attrs_);
 };
 var $rundis$elm_bootstrap$Bootstrap$Card$Internal$CardBlock = function (a) {
 	return {$: 'CardBlock', a: a};
@@ -17949,9 +18019,6 @@ var $rundis$elm_bootstrap$Bootstrap$Accordion$cards = F2(
 				configRec,
 				{cards: cards_}));
 	});
-var $rundis$elm_bootstrap$Bootstrap$Alert$Config = function (a) {
-	return {$: 'Config', a: a};
-};
 var $rundis$elm_bootstrap$Bootstrap$Alert$children = F2(
 	function (children_, _v0) {
 		var configRec = _v0.a;
@@ -18084,18 +18151,6 @@ var $rundis$elm_bootstrap$Bootstrap$Navbar$customItems = F2(
 			},
 			config_);
 	});
-var $rundis$elm_bootstrap$Bootstrap$Internal$Role$Danger = {$: 'Danger'};
-var $rundis$elm_bootstrap$Bootstrap$Alert$role = F2(
-	function (role_, _v0) {
-		var configRec = _v0.a;
-		return $rundis$elm_bootstrap$Bootstrap$Alert$Config(
-			_Utils_update(
-				configRec,
-				{role: role_}));
-	});
-var $rundis$elm_bootstrap$Bootstrap$Alert$danger = function (conf) {
-	return A2($rundis$elm_bootstrap$Bootstrap$Alert$role, $rundis$elm_bootstrap$Bootstrap$Internal$Role$Danger, conf);
-};
 var $rundis$elm_bootstrap$Bootstrap$Alert$dismissableWithAnimation = F2(
 	function (dismissMsg, _v0) {
 		var configRec = _v0.a;
@@ -19505,7 +19560,6 @@ var $rundis$elm_bootstrap$Bootstrap$ListGroup$li = F2(
 		return $rundis$elm_bootstrap$Bootstrap$Internal$ListGroup$Item(
 			{children: children, itemFn: $elm$html$Html$li, options: options});
 	});
-var $rundis$elm_bootstrap$Bootstrap$Internal$Role$Success = {$: 'Success'};
 var $rundis$elm_bootstrap$Bootstrap$ListGroup$success = $rundis$elm_bootstrap$Bootstrap$Internal$ListGroup$Roled($rundis$elm_bootstrap$Bootstrap$Internal$Role$Success);
 var $author$project$Main$filterCardBlock = F3(
 	function (model, index, item) {
@@ -19650,10 +19704,6 @@ var $elm$html$Html$Attributes$href = function (url) {
 		_VirtualDom_noJavaScriptUri(url));
 };
 var $elm$svg$Svg$Attributes$id = _VirtualDom_attribute('id');
-var $rundis$elm_bootstrap$Bootstrap$Internal$Role$Info = {$: 'Info'};
-var $rundis$elm_bootstrap$Bootstrap$Alert$info = function (conf) {
-	return A2($rundis$elm_bootstrap$Bootstrap$Alert$role, $rundis$elm_bootstrap$Bootstrap$Internal$Role$Info, conf);
-};
 var $rundis$elm_bootstrap$Bootstrap$Navbar$Dark = {$: 'Dark'};
 var $rundis$elm_bootstrap$Bootstrap$Navbar$scheme = F3(
 	function (modifier, bgColor, conf) {
@@ -19694,6 +19744,11 @@ var $rundis$elm_bootstrap$Bootstrap$Navbar$items = F2(
 	});
 var $rundis$elm_bootstrap$Bootstrap$General$Internal$LG = {$: 'LG'};
 var $rundis$elm_bootstrap$Bootstrap$Button$large = $rundis$elm_bootstrap$Bootstrap$Internal$Button$Size($rundis$elm_bootstrap$Bootstrap$General$Internal$LG);
+var $rundis$elm_bootstrap$Bootstrap$Spinner$Large = {$: 'Large'};
+var $rundis$elm_bootstrap$Bootstrap$Spinner$Size = function (a) {
+	return {$: 'Size', a: a};
+};
+var $rundis$elm_bootstrap$Bootstrap$Spinner$large = $rundis$elm_bootstrap$Bootstrap$Spinner$Size($rundis$elm_bootstrap$Bootstrap$Spinner$Large);
 var $rundis$elm_bootstrap$Bootstrap$Card$Internal$ListGroup = function (a) {
 	return {$: 'ListGroup', a: a};
 };
@@ -20093,13 +20148,36 @@ var $author$project$Main$showContext = function (mdl) {
 					]))
 			])) : A2($elm$html$Html$div, _List_Nil, _List_Nil);
 };
-var $elm$svg$Svg$svg = $elm$svg$Svg$trustedNode('svg');
-var $elm$virtual_dom$VirtualDom$nodeNS = function (tag) {
-	return _VirtualDom_nodeNS(
-		_VirtualDom_noScript(tag));
-};
-var $elm$svg$Svg$node = $elm$virtual_dom$VirtualDom$nodeNS('http://www.w3.org/2000/svg');
-var $elm$svg$Svg$text = $elm$virtual_dom$VirtualDom$text;
+var $rundis$elm_bootstrap$Bootstrap$Spinner$applyModifier = F2(
+	function (modifier, options) {
+		switch (modifier.$) {
+			case 'Kind':
+				var spinnerKind = modifier.a;
+				return _Utils_update(
+					options,
+					{kind: spinnerKind});
+			case 'Size':
+				var spinnerSize = modifier.a;
+				return _Utils_update(
+					options,
+					{size: spinnerSize});
+			case 'Color':
+				var color_ = modifier.a;
+				return _Utils_update(
+					options,
+					{
+						color: $elm$core$Maybe$Just(color_)
+					});
+			default:
+				var list = modifier.a;
+				return _Utils_update(
+					options,
+					{attributes: list});
+		}
+	});
+var $rundis$elm_bootstrap$Bootstrap$Spinner$Border = {$: 'Border'};
+var $rundis$elm_bootstrap$Bootstrap$Spinner$Normal = {$: 'Normal'};
+var $rundis$elm_bootstrap$Bootstrap$Spinner$defaultOptions = {attributes: _List_Nil, color: $elm$core$Maybe$Nothing, kind: $rundis$elm_bootstrap$Bootstrap$Spinner$Border, size: $rundis$elm_bootstrap$Bootstrap$Spinner$Normal};
 var $elm$virtual_dom$VirtualDom$attribute = F2(
 	function (key, value) {
 		return A2(
@@ -20107,6 +20185,74 @@ var $elm$virtual_dom$VirtualDom$attribute = F2(
 			_VirtualDom_noOnOrFormAction(key),
 			_VirtualDom_noJavaScriptOrHtmlUri(value));
 	});
+var $elm$html$Html$Attributes$attribute = $elm$virtual_dom$VirtualDom$attribute;
+var $rundis$elm_bootstrap$Bootstrap$Spinner$kindClassName = function (kind_) {
+	if (kind_.$ === 'Border') {
+		return 'spinner-border';
+	} else {
+		return 'spinner-grow';
+	}
+};
+var $rundis$elm_bootstrap$Bootstrap$Spinner$kindClass = A2($elm$core$Basics$composeL, $elm$html$Html$Attributes$class, $rundis$elm_bootstrap$Bootstrap$Spinner$kindClassName);
+var $rundis$elm_bootstrap$Bootstrap$Spinner$sizeAttributes = F2(
+	function (size_, kind_) {
+		switch (size_.$) {
+			case 'Normal':
+				return $elm$core$Maybe$Nothing;
+			case 'Small':
+				return $elm$core$Maybe$Just(
+					_List_fromArray(
+						[
+							$elm$html$Html$Attributes$class(
+							$rundis$elm_bootstrap$Bootstrap$Spinner$kindClassName(kind_) + '-sm')
+						]));
+			default:
+				return $elm$core$Maybe$Just(
+					_List_fromArray(
+						[
+							A2($elm$html$Html$Attributes$style, 'width', '3rem'),
+							A2($elm$html$Html$Attributes$style, 'height', '3rem')
+						]));
+		}
+	});
+var $rundis$elm_bootstrap$Bootstrap$Spinner$toAttributes = function (options) {
+	return _Utils_ap(
+		A2(
+			$elm$core$List$filterMap,
+			$elm$core$Basics$identity,
+			_List_fromArray(
+				[
+					$elm$core$Maybe$Just(
+					$rundis$elm_bootstrap$Bootstrap$Spinner$kindClass(options.kind)),
+					A2($elm$core$Maybe$map, $rundis$elm_bootstrap$Bootstrap$Internal$Text$textColorClass, options.color)
+				])),
+		_Utils_ap(
+			A2(
+				$elm$core$Maybe$withDefault,
+				_List_Nil,
+				A2($rundis$elm_bootstrap$Bootstrap$Spinner$sizeAttributes, options.size, options.kind)),
+			_Utils_ap(
+				_List_fromArray(
+					[
+						A2($elm$html$Html$Attributes$attribute, 'role', 'status')
+					]),
+				options.attributes)));
+};
+var $rundis$elm_bootstrap$Bootstrap$Spinner$spinner = F2(
+	function (options, children) {
+		var opts = A3($elm$core$List$foldl, $rundis$elm_bootstrap$Bootstrap$Spinner$applyModifier, $rundis$elm_bootstrap$Bootstrap$Spinner$defaultOptions, options);
+		return A2(
+			$elm$html$Html$div,
+			$rundis$elm_bootstrap$Bootstrap$Spinner$toAttributes(opts),
+			children);
+	});
+var $elm$svg$Svg$svg = $elm$svg$Svg$trustedNode('svg');
+var $elm$virtual_dom$VirtualDom$nodeNS = function (tag) {
+	return _VirtualDom_nodeNS(
+		_VirtualDom_noScript(tag));
+};
+var $elm$svg$Svg$node = $elm$virtual_dom$VirtualDom$nodeNS('http://www.w3.org/2000/svg');
+var $elm$svg$Svg$text = $elm$virtual_dom$VirtualDom$text;
 var $Garados007$elm_svg_parser$SvgParser$toAttribute = function (_v0) {
 	var name = _v0.a;
 	var value = _v0.b;
@@ -21352,7 +21498,6 @@ var $rundis$elm_bootstrap$Bootstrap$Accordion$view = F2(
 				A2($rundis$elm_bootstrap$Bootstrap$Accordion$renderCard, state, configRec),
 				configRec.cards));
 	});
-var $elm$html$Html$Attributes$attribute = $elm$virtual_dom$VirtualDom$attribute;
 var $rundis$elm_bootstrap$Bootstrap$Alert$StartClose = {$: 'StartClose'};
 var $rundis$elm_bootstrap$Bootstrap$Alert$clickHandler = F2(
 	function (visibility, configRec) {
@@ -22449,7 +22594,7 @@ var $author$project$Main$view = function (model) {
 								$rundis$elm_bootstrap$Bootstrap$Navbar$brand,
 								_List_fromArray(
 									[
-										$elm$html$Html$Attributes$href('#'),
+										$elm$html$Html$Attributes$href('/index.html'),
 										A2($elm$html$Html$Attributes$style, 'cursor', 'pointer')
 									]),
 								_List_fromArray(
@@ -22606,25 +22751,72 @@ var $author$project$Main$view = function (model) {
 											_List_fromArray(
 												[
 													$elm$html$Html$text(
-													model.errorType ? 'Success' : 'Error')
+													$author$project$Main$alertTitle(model.errorType))
 												])),
 											$elm$html$Html$text(model.error)
 										]),
 									A2(
 										$rundis$elm_bootstrap$Bootstrap$Alert$dismissableWithAnimation,
 										$author$project$Main$AlertMsg,
-										(model.errorType ? $rundis$elm_bootstrap$Bootstrap$Alert$info : $rundis$elm_bootstrap$Bootstrap$Alert$danger)($rundis$elm_bootstrap$Bootstrap$Alert$config))))
+										A2($author$project$Main$alertColor, model.errorType, $rundis$elm_bootstrap$Bootstrap$Alert$config))))
 							]))
 					])),
 				A2(
 				$elm$html$Html$div,
 				_List_fromArray(
 					[
-						A2($elm$html$Html$Attributes$style, 'border-style', 'none')
+						A2($elm$html$Html$Attributes$style, 'border-style', 'none'),
+						A2(
+						$elm$html$Html$Attributes$style,
+						'opacity',
+						model.spinnerOn ? '0.6' : '1.0')
 					]),
 				_List_fromArray(
 					[
 						makeSvg(model)
+					])),
+				A2(
+				$elm$html$Html$div,
+				_List_fromArray(
+					[
+						A2($elm$html$Html$Attributes$style, 'position', 'absolute'),
+						A2($elm$html$Html$Attributes$style, 'left', '0%'),
+						A2($elm$html$Html$Attributes$style, 'bottom', '0%'),
+						A2(
+						$elm$html$Html$Attributes$style,
+						'width',
+						$elm$core$String$fromInt(model.width) + 'px'),
+						A2(
+						$elm$html$Html$Attributes$style,
+						'height',
+						$elm$core$String$fromInt(model.height) + 'px'),
+						A2(
+						$elm$html$Html$Attributes$style,
+						'display',
+						model.spinnerOn ? 'flex' : 'none'),
+						A2($elm$html$Html$Attributes$style, 'align-items', 'center'),
+						A2($elm$html$Html$Attributes$style, 'justify-content', 'center'),
+						A2($elm$html$Html$Attributes$style, 'z-index', '2'),
+						A2($elm$html$Html$Attributes$style, 'background-color', 'lightgrey'),
+						A2($elm$html$Html$Attributes$style, 'opacity', '0.5')
+					]),
+				_List_fromArray(
+					[
+						A2(
+						$rundis$elm_bootstrap$Bootstrap$Spinner$spinner,
+						_List_fromArray(
+							[
+								$rundis$elm_bootstrap$Bootstrap$Spinner$large,
+								$rundis$elm_bootstrap$Bootstrap$Spinner$attrs(
+								_List_fromArray(
+									[
+										A2($elm$html$Html$Attributes$style, 'width', '12rem'),
+										A2($elm$html$Html$Attributes$style, 'height', '12rem'),
+										A2($elm$html$Html$Attributes$style, 'color', 'black'),
+										A2($elm$html$Html$Attributes$style, 'border-width', '1rem')
+									]))
+							]),
+						_List_Nil)
 					])),
 				$author$project$Main$showContext(model)
 			]),
