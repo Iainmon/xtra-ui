@@ -222,7 +222,7 @@ storageHandler response state mdl =
         LocalStorage.GetResponse { label, key, value } ->
             case value of
                 Nothing -> update (AlertMsg Alert.shown) {model | error = "Empty result", errorType = False}
-                Just v -> update Run (loadSavedGraphToModel model (decodeSavedGraphs v))
+                Just v -> (loadSavedGraphToModel model (decodeSavedGraphs v), Cmd.batch [run Run, run CloseFilterAcc ])
         LocalStorage.ListKeysResponse { label, keys } ->
             update RunShare {model | savedGraphKeys = keys}
             --{model | savedGraphKeys = keys} |> withCmd Run
@@ -309,7 +309,7 @@ view model =
             Just a -> Url.toString a |> String.split "?" |> List.head |> Maybe.withDefault ""
         shareUrl = baseUrl ++ "?" ++ shareB64
     in
-      { title = "Xtra.run"
+      { title = "Tracr.app"
       , body = 
         [ Navbar.config NavbarMsg
           |> Navbar.withAnimation
@@ -512,7 +512,7 @@ filterCardBlock model index item =
         ListGroup.li [liColor]
           [ Html.div
               [Html.Attributes.id itemId]
-              [Html.div [style "opacity" "0.8"] [filterView model item "" []]]--text "<--- Move Filter Here --->" ]]
+              [Html.div [] [filterView model item "" []]]--text "<--- Move Filter Here --->" ]]
           ]
     Nothing ->
       ListGroup.li [liColor]
@@ -611,7 +611,7 @@ filterView model item idStr event =
           [ Button.button 
               [ Button.outlineLight
               , Button.small
-              , Button.attrs ([Html.Attributes.id idStr, Spacing.m1, style "cursor" "pointer"] ++ event)
+              , Button.attrs ([Html.Attributes.id idStr, Spacing.m1, style "cursor" "grab"] ++ event)
               ] 
               [ text "\u{2630}" ]
           , Button.button 
@@ -630,7 +630,7 @@ filterView model item idStr event =
               [div (if item.actionIndex == 1 then [] else [style "text-decoration" "line-through"]) [text "Propagate"]]
           ]
         , Grid.col [Col.md5 ]
-          [ select [Html.Events.on "change" (D.map (SetFilter item.id) targetValueIntParse), style "height" "35px"] --drop down list with filters from model, at currently selected index 
+          [ select [Html.Events.on "change" (D.map (SetFilter item.id) targetValueIntParse), style "height" "35px", style "width" "210px"] --drop down list with filters from model, at currently selected index 
             (List.map (filterOption model.initData.filters item.selectIndex) <| List.range 0 <| (+) (-1) <| List.length model.initData.filters)
           ]
         , Grid.col [Col.mdAuto]
@@ -638,7 +638,7 @@ filterView model item idStr event =
               [ Button.outlineDanger
               , Button.small
               , Button.onClick (RemoveFilter item.id)
-              , Button.attrs []--[Spacing.ml5]
+              , Button.attrs [Spacing.ml1]--[Spacing.ml5]
               ]
               [text "Delete"]
           ]
@@ -646,9 +646,9 @@ filterView model item idStr event =
       ::
       ( if not showParam then [] else
         [ Grid.row []
-            [ Grid.col [Col.md5] []
+            [ Grid.col [Col.md4] []
             , Grid.col [Col.mdAuto]
-              [ input [hidden <| not showParam, placeholder "Filter parameter", value item.param, onInput (UpdateFilterParam item.id)] []--input text box for parameters IF the current filter has one (with event handler for changing)
+              [ input [hidden <| not showParam, style "margin-left" "35px",placeholder "Filter parameter", value item.param, onInput (UpdateFilterParam item.id)] []--input text box for parameters IF the current filter has one (with event handler for changing)
               ]
             ]
         ]
@@ -861,7 +861,7 @@ update msg model =
             "" -> 
                 let newRefNodes = List.reverse <| List.Extra.unique <| DU.getRefList dot
                     newNodeLabels = List.reverse <| DU.getLabels dot
-                    maxLabelLength = 35 -- replace with model variable
+                    maxLabelLength = 50 -- replace with model variable
                     matchTokens = ["=","⇒","of","in", ";"] -- replace with model variable (recieved from backend)
                     shortenedDot = DU.shortenLabels dot newNodeLabels maxLabelLength matchTokens
                     newModel = {model | dotString = dot, shortDotString = shortenedDot, refNodes = newRefNodes, allNodeLabels = newNodeLabels}
@@ -961,9 +961,10 @@ update msg model =
                 case model.saveName of
                     "" -> update (AlertMsg Alert.shown) { model | error = "Please enter a name to save your program", errorType = False}
                     name ->
-                        let newModel = {model | dirty=True, savedGraphKeys=(name :: model.savedGraphKeys), selectedSaveGraph=0, saveName=""}
+                        let newModel = {model | dirty=True, savedGraphKeys=(name :: model.savedGraphKeys), selectedSaveGraph=0, saveName="", error = "Saved as " ++ name, errorType = True}
+                            cmds = Cmd.batch [send (LocalStorage.put name (Just <| savedGraphToJSON <| getCurrentGraph model)) newModel, run (AlertMsg Alert.shown)]
                         in
-                        newModel |> withCmd (send (LocalStorage.put name (Just <| savedGraphToJSON <| getCurrentGraph model)) newModel)
+                        (newModel, cmds)
         Process value ->
             case PortFunnels.processValue funnelDict value model.funnelState model
             of
@@ -993,7 +994,7 @@ update msg model =
             else
               ({model | nodeContext = ContextMenu 0 0 0 False}, Cmd.none)
         CBCopy str -> (model, clipboardCopy str)
-        CBRes _ -> ({model | error = "Link copied to Clipboard", errorType = False}, run <| AlertMsg Alert.shown)
+        CBRes _ -> ({model | error = "Link copied to Clipboard", errorType = True}, run <| AlertMsg Alert.shown)
         ResizeView w h -> ( { model | width = w, height = h - navBarHeight }, Cmd.none )
         NavbarMsg state -> ({model | navbarState = state}, Cmd.none)
         PopoverMsg state -> ({model | cbPopover = state}, Cmd.none)

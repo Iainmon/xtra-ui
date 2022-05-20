@@ -14,7 +14,7 @@ shorten input budget tokens =
              cutIndex = Tuple.first lastToken
              firstCut = max (cutIndex - cutAmount) 0
         
-        in (String.slice 0 firstCut input) ++ "..." ++ String.dropLeft cutIndex input
+        in (String.slice 0 firstCut input) ++ " …  " ++ String.dropLeft cutIndex input
     
 
 getLastToken : String -> List String -> (Int, String)
