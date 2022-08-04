@@ -27,7 +27,6 @@ import SvgUtil as SU
 import CustomDecoders as CD
 import UITypes as UT
 import List.Extra exposing (updateIf)
---import Html.Attributes exposing (alt)
 
 import PortFunnel.LocalStorage as LocalStorage
     exposing ( Key, Message, Response(..))
@@ -202,7 +201,7 @@ initModel location h w nb =
     , saveName = ""
     , selectedSaveGraph = 0
     , url = Url.fromString location
-    , share = queryParser location -- location --
+    , share = queryParser location
     , generatedShare = ""
     , dirty = False
     , nodeContext = ContextMenu 0 0 0 False
@@ -234,7 +233,6 @@ storageHandler response state mdl =
                 Just v -> (loadSavedGraphToModel model (decodeSavedGraphs v), Cmd.batch [run Run, run CloseFilterAcc, run (AlertMsg Alert.shown)])
         LocalStorage.ListKeysResponse { label, keys } ->
             update RunShare {model | savedGraphKeys = keys}
-            --{model | savedGraphKeys = keys} |> withCmd Run
         _ ->  update ListGraphKeys model
 
 funnelDict : FunnelDict Model Msg
@@ -266,13 +264,19 @@ exampleFilter : String
 exampleFilter = "recursive s = (nonFirstTwo s) except (afterLast s)\n\ndecBy1 = <_X - 1 => _Y>\nintermediateFact = recursive <fact _X => _Y>\ncases = <fact _X => _Y> then children\n\nhide <let fact = _X in _Y => _Z>\nhide cases\nfactor binding\nfactor decBy1 then all\nhide pattern\nhide intermediateFact\nhide reflexive"
 
 krokiURL : String
-krokiURL = "http://localhost:8001/graphviz/svg"
+krokiURL = "https://kroki.io/graphviz/svg"
 
 xtraBackendURL : String
-xtraBackendURL = "http://localhost:8081/trace"
+xtraBackendURL = "trace"
 
 xtraBackendURLInit : String
-xtraBackendURLInit = "http://localhost:8081/init"
+xtraBackendURLInit = "init"
+
+baseUrl : Model -> String
+baseUrl model = 
+  case model.url of
+    Nothing -> "https://www.tracr.app/"
+    Just a -> Url.toString a |> String.split "?" |> List.head |> Maybe.withDefault ""
 
 view : Model -> Browser.Document Msg
 view model =
@@ -313,17 +317,14 @@ view model =
                             ] svgs 
                         )]
         shareB64 = getCurrentGraph model |> savedGraphToJSON |> JE.encode 0 |> B64.encode
-        baseUrl = case model.url of
-            Nothing -> ""
-            Just a -> Url.toString a |> String.split "?" |> List.head |> Maybe.withDefault ""
-        shareUrl = baseUrl ++ "?" ++ shareB64
+        shareUrl = (baseUrl model) ++ "?" ++ shareB64
     in
       { title = "Tracr.app"
       , body = 
         [ Navbar.config NavbarMsg
           |> Navbar.withAnimation
           |> Navbar.collapseSmall 
-          |> Navbar.brand [href "/index.html", style "cursor" "pointer"] [text "Tracr.app"]
+          |> Navbar.brand [href "/", style "cursor" "pointer"] [text "Tracr.app"]
           |> Navbar.info
           |> Navbar.items
             [ Navbar.dropdown
@@ -345,9 +346,6 @@ view model =
             , Navbar.itemLink
               [onClick <| CBCopy shareUrl, style "cursor" "pointer"]
               [text "Share"]
-          --  , Navbar.itemLink
-          --    [onClick <| ShowModal About, style "cursor" "pointer"]
-          --    [text "About"]
 
             ]
           |> Navbar.customItems
@@ -383,11 +381,8 @@ view model =
                 , blocks =
                   [ Accordion.block []
                       [Block.text [] [Button.button [Button.success, Button.block, Button.large, Button.attrs [onClick AddFilter, style "cursor" "pointer"]] [text "Add New Filter (+)"]]]
-                  , Accordion.listGroup ({-filterCardBlockGhost model model.items ::-} (List.indexedMap (filterCardBlock model) model.items))
+                  , Accordion.listGroup ((List.indexedMap (filterCardBlock model) model.items))
                   ]
---                  , Accordion.block []
---                    [Block.custom (div [] [model.items |> List.indexedMap (itemView model) |> Html.div [], ghostView model model.items])]
---                  ]
                 }
               ]
             |> Accordion.view model.accState
@@ -457,8 +452,6 @@ showContext mdl =
       , style "left" (String.fromInt mdl.nodeContext.mouseX |> flip (++) "px")
       , style "top" (String.fromInt mdl.nodeContext.mouseY |> flip (++) "px")
       , style "border" "1px solid black"
-      --, style "background-color" "rgb(200,200,200)"
-      --, style "display" "table-row"
       ]
       [ListGroup.custom
         [ ListGroup.button [ListGroup.active] [text "Global"]
@@ -469,10 +462,6 @@ showContext mdl =
         , ListGroup.button [ListGroup.attrs [onClick <| NodeClicked ("",0,0)]] [text "Placeholder 4"]
         ]
       ]
-{-      [ div [] ["Node Selected: " ++ (String.fromInt mdl.nodeContext.nodeClicked) |> text]
-      , div [] ["MouseX: " ++ (String.fromInt mdl.nodeContext.mouseX) |> text]
-      , div [] ["MouseY: " ++ (String.fromInt mdl.nodeContext.mouseY) |> text]
-      ]-}
   else
     div [] []
 
@@ -499,7 +488,6 @@ exampleOption examples selInd index =
         Just (exampName, _) -> option [value <| String.fromInt index, sel] [text exampName]
         _ -> option [value "-1"] [text "Invalid example index"]
 
---exampleItems : List String -> List (DropdownItem msg)
 exampleItems ex = List.map (\s -> Navbar.dropdownItem [onClick <| LoadEx s] [text s]) ex
 
 filtsToString : Model -> String
@@ -544,20 +532,20 @@ filterCardBlock model index item =
       if dragIndex /= index then
         ListGroup.li [liColor]
           [ Html.div
-              (Html.Attributes.id itemId :: dropEvent)--:: system.dropEvents index itemId)
-              [filterView model item "" []]--[Html.text <| filtToString model item ]
+              (Html.Attributes.id itemId :: dropEvent)
+              [filterView model item "" []]
           ]
       else
         ListGroup.li [liColor]
           [ Html.div
               [Html.Attributes.id itemId]
-              [Html.div [] [filterView model item "" []]]--text "<--- Move Filter Here --->" ]]
+              [Html.div [] [filterView model item "" []]]
           ]
     Nothing ->
       ListGroup.li [liColor]
         [ Html.div
-            [Html.Attributes.id itemId] --(Html.Attributes.id itemId :: [])--(Html.Attributes.id itemId :: dragEvent)--:: system.dragEvents index itemId)
-            [filterView model item "" dragEvent]--[Html.text <| filtToString model item ]
+            [Html.Attributes.id itemId]
+            [filterView model item "" dragEvent]
         ]
       
 itemView : Model -> Int -> Filter -> Html.Html Msg
@@ -572,16 +560,16 @@ itemView model index item =
         Just {dragIndex} ->
             if dragIndex /= index then
                 Html.div
-                    (Html.Attributes.id itemId :: dropEvent)--:: system.dropEvents index itemId)
-                    [filterView model item "" []]--[Html.text <| filtToString model item ]
+                    (Html.Attributes.id itemId :: dropEvent)
+                    [filterView model item "" []]
             else
                 Html.div
                     [Html.Attributes.id itemId]
                     [Html.div [style "background-color" "grey"] [ text "<--- Move Filter Here --->" ]]
         Nothing ->
             Html.div
-                [Html.Attributes.id itemId] --(Html.Attributes.id itemId :: [])--(Html.Attributes.id itemId :: dragEvent)--:: system.dragEvents index itemId)
-                [filterView model item "" dragEvent]--[Html.text <| filtToString model item ]
+                [Html.Attributes.id itemId]
+                [filterView model item "" dragEvent]
 
 filterCardBlockGhost : Model -> List Filter -> ListGroup.Item Msg
 filterCardBlockGhost model items =
@@ -595,8 +583,8 @@ filterCardBlockGhost model items =
     Just item ->
       ListGroup.li [if item.enabled then ListGroup.success else ListGroup.danger]
           [ Html.div
-              (style "opacity" "0.5" :: system.ghostStyles dnd)--:: system.dropEvents index itemId)
-              [filterView model item "" []]--[Html.text <| filtToString model item ]
+              (style "opacity" "0.5" :: system.ghostStyles dnd)
+              [filterView model item "" []]
           ]
     Nothing ->
       ListGroup.li [] []
@@ -614,7 +602,7 @@ ghostView model items =
         Just item ->
             Html.p
                 (style "opacity" "0.5" :: system.ghostStyles dnd)
-                [filterView model item "" []]--[Html.text <| filtToString model item]
+                [filterView model item "" []]
         Nothing ->
             Html.text ""
 
@@ -858,20 +846,6 @@ type Msg
     | OpenFilterAcc
     | DDMsg Dropdown.State
 
--- Now outdated function to  get Svg to embed
-{-- 
-
-svgOrNot : Model -> Html Msg
-svgOrNot model = 
-    if .svgString model == "" then
-        div [] []
-    else
-        case parseWithNodeMod (modNodeTextLength << modTitle) (SU.cleanFront (.svgString model)) of
-            Err msg -> div [] [text msg]
-            Ok elem -> elem
-
---}
-
 
 -- Master update function for processing event msgs
 update : Msg -> Model -> (Model, Cmd Msg)
@@ -1064,7 +1038,7 @@ subscriptions model =
 getDotString : Model -> Cmd Msg
 getDotString model = 
     Http.post
-    { url = xtraBackendURL
+    { url = baseUrl model ++ xtraBackendURL
         , expect = Http.expectJson GotDot (D.succeed Tuple.pair 
                                             |> DE.andMap (D.field "dot" D.string)
                                             |> DE.andMap (D.field "error" D.string))
@@ -1072,9 +1046,9 @@ getDotString model =
     }
 
 getInitData : Model -> Cmd Msg
-getInitData _ =
+getInitData model =
     Http.get
-    { url = xtraBackendURLInit
+    { url = baseUrl model ++ xtraBackendURLInit
     , expect = Http.expectJson GotInit CD.initDecoder }
 
 --Http request code for getting SvgString from Kroki Container
@@ -1105,75 +1079,6 @@ buildErrorMessage httpError =
         Http.BadBody message ->
             message
 
--- This code for replacing Node numbers with Letters is no longer needed
-{-
-nodePattern : String
-nodePattern = "\">[0-9].</FONT>"
-
---nodeTest = "<FONT COLOR=\"#0000ff\" POINT-SIZE=\"9\">66</FONT>\n<FONT COLOR=\"#0000ff\" POINT-SIZE=\"9\">65</FONT>"
-beforeNode : String
-beforeNode = "POINT-SIZE=\"9\">"
-afterNode : String
-afterNode = "</FONT>"
-
-fixNodes : String -> String
-fixNodes dot = 
-    let nodeNums = findAllNodeNumbers dot in
-    let alphas = List.reverse (getAlphaNodes (List.length nodeNums)) in
-    let replacers = genReplaceNode nodeNums alphas in
-    stringFindAndReplace dot replacers
-
-
-genReplaceNode : List Int -> List String -> List (String, String)
-genReplaceNode num alpha =
-    case (num,alpha) of
-       ([],_) -> []
-       (_,[]) -> []
-       ((n :: ns),(a :: alphs)) -> (wrapNodeMatch (String.fromInt n), wrapNodeMatch a) :: genReplaceNode ns alphs
-
-wrapNodeMatch : String -> String
-wrapNodeMatch i = beforeNode ++ i ++ afterNode
-
-findAllNodeNumbers : String -> List Int
-findAllNodeNumbers dot = pullIDs (Regex.find nodeRegex dot)
-
---genReplacementList : List Int -> 
-
-pullIDs : List Regex.Match -> List Int
-pullIDs list =
-    case list of
-        [] -> []
-        (x :: xs) -> 
-            let y = .match x in
-                Maybe.withDefault 0 (String.toInt (String.slice 2 -7 y)) :: pullIDs xs
-
---"[0-9]. -> [0-9].;"
---"<FONT COLOR="#0000ff" POINT-SIZE="9">[0-9].<\/FONT>"
-
-nodeRegex : Regex.Regex
-nodeRegex = Maybe.withDefault Regex.never (Regex.fromString nodePattern)
-
-
--- This kinda works, boundaries are wonky, but ok for now. fix later.
-getAlphaNodes : Int -> List String
-getAlphaNodes i =
-    if i < 1 then
-        []
-    else 
-        getAlphaNodes (i - 1) ++ [getNodeExact i]
-
-getNodeExact : Int -> String
-getNodeExact i =
-    if i == 0 then
-        ""
-    else if i <= 26 then
-        String.fromChar (Char.fromCode (i + 64))
-    else 
-        let iDiv = i // 26 in
-        let iRem = remainderBy 26 i in 
-        (getNodeExact iDiv) ++ (getNodeExact (iRem))
--}
-
 main : Program Flags Model Msg
 main =
     Browser.document
@@ -1182,17 +1087,3 @@ main =
         , update = update
         , subscriptions = subscriptions
         }
-
-
--- Convienience function to show the node map list (id, label) (used for debugging, probably not required anymore)
-{-
-showStrTupList : List (String, String) -> String
-showStrTupList input = case input of
-   [] -> ""
-   (x::xs) -> (showStrTup x " = ") ++ "\n" ++ showStrTupList xs
-showStrTup : (String, String) -> String -> String
-showStrTup (first, second) sep = first ++ sep ++ second
--}
-
-
-
